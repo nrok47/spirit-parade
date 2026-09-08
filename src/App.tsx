@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import {
   AVATARS,
@@ -28,11 +28,25 @@ import {
   type World,
   type Zone,
 } from './sim'
+import {
+  MS_PER_TICK,
+  avatarName,
+  fetchActions,
+  me,
+  netSelfCheck,
+  now,
+  replay,
+  sendAction,
+  type Action,
+} from './net'
 
 const SPEEDS = [0, 1, 4]
-const BASE_MS = 2000 // 1 ชั่วโมงในเมือง = 2 วินาทีจริง
+const BASE_MS = MS_PER_TICK // 1 ชั่วโมงในเมือง = 2 วินาทีจริง
 
-if (import.meta.env.DEV) selfCheck()
+if (import.meta.env.DEV) {
+  selfCheck()
+  netSelfCheck()
+}
 
 const fearColor = (f: number) => (f >= 70 ? '#e05b4a' : f >= 40 ? '#e0a13a' : '#5aa46a')
 
@@ -57,18 +71,75 @@ function AvatarPicker({ onPick }: { onPick: (id: AvatarId) => void }) {
 }
 
 export default function App() {
+  const [mode, setMode] = useState<'local' | 'shared'>(
+    () => (localStorage.getItem('sp-mode') as 'local' | 'shared') ?? 'local',
+  )
   const [w, setW] = useState<World | null>(() => load(BASE_MS))
   const [speed, setSpeed] = useState(1)
   const [aim, setAim] = useState<Power | null>(null)
+
+  // --- โลกร่วม ---
+  const [myAvatar, setMyAvatar] = useState<AvatarId | null>(
+    () => (localStorage.getItem('sp-avatar') as AvatarId) ?? null,
+  )
+  const [acts, setActs] = useState<Action[]>([])
+  const [shared, setShared] = useState<World | null>(null)
+  const [players, setPlayers] = useState<Record<string, AvatarId>>({})
+  const [netErr, setNetErr] = useState<string | null>(null)
+  const [myPos, setMyPos] = useState({ x: ZONE_POS['ศาลปู่ตา'][0], y: ZONE_POS['ศาลปู่ตา'][1] })
+
   const ref = useRef(w)
   useEffect(() => {
     ref.current = w
   })
+  const actsRef = useRef(acts)
+  const posRef = useRef(myPos)
+  useEffect(() => {
+    actsRef.current = acts
+    posRef.current = myPos
+  }, [acts, myPos])
 
-  const done = !!w && seasonOver(w)
+  const rebuild = useCallback(
+    (list: Action[]) => {
+      if (!myAvatar) return
+      const { season, tick } = now()
+      const s = replay(season, tick, list, me(), myAvatar)
+      s.world.pos = posRef.current
+      setShared(s.world)
+      setPlayers(s.avatars)
+    },
+    [myAvatar],
+  )
+
+  // โลกร่วม: ดึงรายการที่คนอื่นใส่ทุก 8 วินาที แล้วเดินเวลาเองทุก tick
+  useEffect(() => {
+    if (mode !== 'shared' || !myAvatar) return
+    let dead = false
+    const pull = async () => {
+      try {
+        const list = await fetchActions(now().season)
+        if (dead) return
+        setNetErr(null)
+        setActs(list)
+        rebuild(list)
+      } catch (e) {
+        if (!dead) setNetErr((e as Error).message)
+      }
+    }
+    pull()
+    const p = setInterval(pull, 8000)
+    const t = setInterval(() => rebuild(actsRef.current), BASE_MS)
+    return () => {
+      dead = true
+      clearInterval(p)
+      clearInterval(t)
+    }
+  }, [mode, myAvatar, rebuild])
+
+  const doneLocal = mode === 'local' && !!w && seasonOver(w)
 
   useEffect(() => {
-    if (!SPEEDS[speed] || done) return
+    if (mode !== 'local' || !SPEEDS[speed] || doneLocal) return
     const id = setInterval(() => {
       const cur = ref.current
       if (!cur || seasonOver(cur)) return
@@ -77,7 +148,7 @@ export default function App() {
       setW(next)
     }, BASE_MS / SPEEDS[speed])
     return () => clearInterval(id)
-  }, [speed, done])
+  }, [speed, doneLocal, mode])
 
   useEffect(() => {
     const id = setInterval(() => ref.current && save(ref.current), 5000)
@@ -89,29 +160,84 @@ export default function App() {
     }
   }, [])
 
-  if (!w) return <AvatarPicker onPick={(id) => setW(createWorld(Date.now() % 100000, id))} />
-
-  const me = avatarOf(w)
-  const people = alive(w)
-  const fear = cityFear(w)
-  const faith = Math.floor(w.faith)
-  const dayNo = Math.floor(w.tick / 24) + 1
-
-  const fire = (p: Power, c?: Citizen, z?: Zone) => {
-    const next = { ...w }
-    if (castPower(next, p.key, c, z)) setW(next)
+  const switchMode = (m: 'local' | 'shared') => {
+    localStorage.setItem('sp-mode', m)
+    setMode(m)
     setAim(null)
   }
+
+  if (mode === 'shared' && !myAvatar)
+    return (
+      <AvatarPicker
+        onPick={(id) => {
+          localStorage.setItem('sp-avatar', id)
+          setMyAvatar(id)
+        }}
+      />
+    )
+  if (mode === 'local' && !w)
+    return <AvatarPicker onPick={(id) => setW(createWorld(Date.now() % 100000, id))} />
+
+  const view = mode === 'shared' ? shared : w
+  if (!view)
+    return (
+      <div className="app picker">
+        <h1>กำลังต่อเข้าเมืองร่วม…</h1>
+        {netErr && <p className="lead err">{netErr}</p>}
+        <div className="powers">
+          <button onClick={() => switchMode('local')}>กลับไปเล่นเมืองของตัวเอง</button>
+        </div>
+      </div>
+    )
+
+  const me_ = avatarOf(view)
+  const people = alive(view)
+  const fear = cityFear(view)
+  const faith = Math.floor(view.faith)
+  const dayNo = Math.floor(view.tick / 24) + 1
+
+  const fire = (p: Power, c?: Citizen, z?: Zone) => {
+    if (mode === 'local') {
+      const next = { ...w! }
+      if (castPower(next, p.key, c, z)) setW(next)
+      setAim(null)
+      return
+    }
+    // โลกร่วม: ลองในเครื่องก่อน ผ่านแล้วค่อยส่งขึ้นไป
+    const probe = { ...view }
+    if (!castPower(probe, p.key, c, z)) {
+      setAim(null)
+      return
+    }
+    const { season, tick } = now()
+    const a: Action = {
+      season,
+      tick,
+      player: me(),
+      avatar: myAvatar!,
+      power: p.key,
+      target_citizen: c?.id ?? null,
+      target_zone: z ?? null,
+      px: myPos.x,
+      py: myPos.y,
+    }
+    const list = [...acts, a]
+    setActs(list)
+    rebuild(list)
+    setAim(null)
+    sendAction(a).catch((e) => setNetErr((e as Error).message))
+  }
+
   const tapPower = (p: Power) => (p.target === 'none' ? fire(p) : setAim(aim?.key === p.key ? null : p))
 
-  if (done) {
+  if (doneLocal && w) {
     const born = w.citizens.filter((c) => c.bornHere).length
     const left = w.citizens.filter((c) => c.gone).length
     return (
       <div className="app">
         <h1>จบฤดูที่ {w.season}</h1>
         <p className="lead">
-          {me.icon} {me.name} · {SEASON_DAYS} วันผ่านไป
+          {me_.icon} {me_.name} · {SEASON_DAYS} วันผ่านไป
         </p>
         <div className="summary">
           <div className="stat big">
@@ -160,14 +286,24 @@ export default function App() {
     )
   }
 
-  // คลิกที่ว่างบนกระดาน = ย้ายตัวเองไปยืนตรงนั้น
   const onBoard = (e: React.MouseEvent<SVGSVGElement>) => {
     if (aim) return
     const r = e.currentTarget.getBoundingClientRect()
-    const next = { ...w }
-    moveTo(next, ((e.clientX - r.left) / r.width) * BOARD, ((e.clientY - r.top) / r.height) * BOARD)
+    const x = ((e.clientX - r.left) / r.width) * BOARD
+    const y = ((e.clientY - r.top) / r.height) * BOARD
+    if (mode === 'shared') {
+      setMyPos({ x: Math.round(x), y: Math.round(y) })
+      const next = { ...view }
+      moveTo(next, x, y)
+      setShared(next)
+      return
+    }
+    const next = { ...w! }
+    moveTo(next, x, y)
     setW(next)
   }
+
+  const others = Object.entries(players).filter(([id]) => id !== me())
 
   return (
     <div className="app">
@@ -185,26 +321,46 @@ export default function App() {
           <b>{faith}</b>
         </div>
         <div className="stat">
-          <span>ฤดู {w.season} · วันที่</span>
+          <span>ฤดู {view.season} · วันที่</span>
           <b>
             {dayNo}
             <small>/{SEASON_DAYS}</small>
           </b>
         </div>
-        <div className="me" title={me.income}>
-          {me.icon} {me.name}
+        <div className="me" title={me_.income}>
+          {me_.icon} {me_.name}
         </div>
         <div className="speeds">
-          {['⏸', '▶', '⏩'].map((s, i) => (
-            <button key={i} className={speed === i ? 'on' : ''} onClick={() => setSpeed(i)}>
-              {s}
-            </button>
-          ))}
+          <button className={mode === 'local' ? 'on' : ''} onClick={() => switchMode('local')} title="เมืองของตัวเอง">
+            🏠
+          </button>
+          <button className={mode === 'shared' ? 'on' : ''} onClick={() => switchMode('shared')} title="เมืองร่วม">
+            🌐
+          </button>
+          {mode === 'local' &&
+            ['⏸', '▶', '⏩'].map((s, i) => (
+              <button key={i} className={speed === i ? 'on' : ''} onClick={() => setSpeed(i)}>
+                {s}
+              </button>
+            ))}
         </div>
       </header>
 
+      {mode === 'shared' && (
+        <div className="netbar">
+          {netErr ? (
+            <span className="err">⚠ {netErr}</span>
+          ) : (
+            <span>
+              เมืองร่วม · เวลาเดินตามจริง · คนอื่นในเมืองนี้{' '}
+              {others.length ? others.map(([id, av]) => `${id} (${avatarName(av)})`).join(' · ') : 'ยังไม่มีใคร'}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="powers">
-        {me.powers.map((p) => (
+        {me_.powers.map((p) => (
           <button
             key={p.key}
             title={p.hint}
@@ -215,15 +371,17 @@ export default function App() {
             {p.name} · {p.cost}
           </button>
         ))}
-        <button
-          onClick={() => {
-            const next = { ...w }
-            runToNotable(next)
-            setW(next)
-          }}
-        >
-          ⏭ ข้ามไปเรื่องถัดไป
-        </button>
+        {mode === 'local' && (
+          <button
+            onClick={() => {
+              const next = { ...w! }
+              runToNotable(next)
+              setW(next)
+            }}
+          >
+            ⏭ ข้ามไปเรื่องถัดไป
+          </button>
+        )}
         <span className="hint">
           {aim
             ? `เลือก${aim.target === 'zone' ? 'ย่าน' : 'คน'}ในวง เพื่อ${aim.name}`
@@ -233,8 +391,8 @@ export default function App() {
 
       <div className="zones">
         {ZONES.map((z) => {
-          const on = (w.wards[z] ?? 0) > w.tick
-          const near = inRange(w, ZONE_POS[z][0], ZONE_POS[z][1])
+          const on = (view.wards[z] ?? 0) > view.tick
+          const near = inRange(view, ZONE_POS[z][0], ZONE_POS[z][1])
           const pickable = aim?.target === 'zone' && near
           return (
             <button
@@ -259,12 +417,12 @@ export default function App() {
             </text>
           ))}
 
-          <circle cx={w.pos.x} cy={w.pos.y} r={RADIUS} className="halo" />
+          <circle cx={view.pos.x} cy={view.pos.y} r={RADIUS} className="halo" />
 
-          {w.houses.map((h) => {
-            const mem = h.members.map((id) => w.citizens.find((c) => c.id === id)).filter((c): c is Citizen => !!c)
+          {view.houses.map((h) => {
+            const mem = h.members.map((id) => view.citizens.find((c) => c.id === id)).filter((c): c is Citizen => !!c)
             const hot = Math.max(0, ...mem.map((c) => c.fear))
-            const warded = (w.wards[h.zone] ?? 0) > w.tick
+            const warded = (view.wards[h.zone] ?? 0) > view.tick
             return (
               <g key={h.id}>
                 <rect
@@ -279,7 +437,7 @@ export default function App() {
                 {mem.map((c, i) => {
                   const cx = h.x + (i - (mem.length - 1) / 2) * 3.2
                   const cy = h.y + 5.4
-                  const pickable = aim?.target === 'citizen' && citizenInRange(w, c)
+                  const pickable = aim?.target === 'citizen' && citizenInRange(view, c)
                   return (
                     <circle
                       key={c.id}
@@ -293,9 +451,9 @@ export default function App() {
                         if (pickable) fire(aim, c)
                       }}
                     >
-                      <title>{`${c.spirit ? '👻' : '🧍'} ${c.name} · ${c.job} · ${c.trait} · กลัว ${Math.round(c.fear)}${
-                        (w.haunt[c.id] ?? 0) > w.tick ? ' · ถูกตามติด' : ''
-                      }`}</title>
+                      <title>{`${c.spirit ? '👻' : '🧍'} ${c.name} · ${c.job} · ${c.trait} · กลัว ${Math.round(
+                        c.fear,
+                      )}${(view.haunt[c.id] ?? 0) > view.tick ? ' · ถูกตามติด' : ''}`}</title>
                     </circle>
                   )
                 })}
@@ -303,14 +461,14 @@ export default function App() {
             )
           })}
 
-          <g className="avatar" transform={`translate(${w.pos.x} ${w.pos.y})`}>
+          <g className="avatar" transform={`translate(${view.pos.x} ${view.pos.y})`}>
             <circle r="3.4" />
-            <text y="1.6">{me.icon}</text>
+            <text y="1.6">{me_.icon}</text>
           </g>
         </svg>
 
         <ol className="log">
-          {w.log.map((l, i) => (
+          {view.log.map((l, i) => (
             <li key={`${l.t}-${i}`} className={l.notable ? 'notable' : ''}>
               {l.text}
             </li>
@@ -320,12 +478,12 @@ export default function App() {
 
       <ul className="roster">
         {people.map((c) => (
-          <li key={c.id} className={houseOf(w, c.id) && citizenInRange(w, c) ? '' : 'out'}>
+          <li key={c.id} className={houseOf(view, c.id) && citizenInRange(view, c) ? '' : 'out'}>
             {c.spirit ? '👻' : '🧍'} {c.name}
             <i style={{ background: fearColor(c.fear) }} />
             {c.partner !== null ? '💍' : ''}
             {c.bornHere ? '✨' : ''}
-            {(w.haunt[c.id] ?? 0) > w.tick ? '🕯' : ''}
+            {(view.haunt[c.id] ?? 0) > view.tick ? '🕯' : ''}
           </li>
         ))}
       </ul>

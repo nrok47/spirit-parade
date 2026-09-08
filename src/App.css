@@ -63,3 +63,6 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: st
 .roster li { display: flex; align-items: center; gap: 4px; }
 .roster li.out { opacity: .4; }
 .roster i { width: 20px; height: 3px; border-radius: 2px; display: inline-block; }
+
+.netbar { font-size: 12px; opacity: .7; margin-top: 10px; }
+.err { color: #e05b4a; }

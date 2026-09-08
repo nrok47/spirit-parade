@@ -42,6 +42,7 @@ export type World = {
   houses: House[]
   nextHouse: number
   pos: { x: number; y: number } // ที่ที่ avatar ยืนอยู่บนกระดาน
+  shared?: boolean // โลกร่วม: ศรัทธาเป็นของแต่ละคน replay จัดการเอง step ไม่ต้องบวกให้
   tick: number // 1 tick = 1 ชั่วโมงในเมือง
   faith: number
   nextId: number
@@ -96,6 +97,8 @@ function rng(seed: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
 }
+
+export const rngFor = rng // ให้โลกร่วมใช้ตัวสุ่มตัวเดียวกัน
 
 const clamp = (n: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n))
 const pick = <T,>(r: () => number, a: T[]) => a[Math.floor(r() * a.length)]
@@ -179,6 +182,20 @@ export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'poot
     runs: [],
     savedAt: Date.now(),
   }
+}
+
+// รายได้ต่อ tick ของแต่ละสาย — แยกออกมาเพื่อให้โลกร่วม replay คิดศรัทธาให้ทีละคนได้
+export function income(w: World, avatar: AvatarId, r: () => number): number {
+  const people = alive(w)
+  if (avatar === 'ghost') return (people.reduce((n, c) => n + c.fear, 0) / 100) * 0.1 // ยิ่งเมืองกลัวยิ่งอิ่ม
+  if (avatar === 'shaman') return people.filter((c) => c.fear > 55).length * 0.2 // คนกลัวคือลูกค้า
+  if (avatar === 'police') {
+    const f = cityFear(w)
+    return f < 60 ? ((60 - f) / 100) * 2 : 0 // เมืองสงบ = ผลงาน
+  }
+  let n = 0
+  for (const c of people) if (r() < c.fear / 260) n += c.bornHere ? 0.9 : 0.6
+  return n
 }
 
 export const alive = (w: World) => w.citizens.filter((c) => !c.gone)
@@ -265,7 +282,7 @@ function playBeat(w: World, run: ChainRun, r: () => number) {
     for (const o of alive(w)) if (o.zone === c.zone) scare(o, beat.zoneFear)
   if (beat.tieFear) for (const id of c.ties) { const o = byId(w, id); if (o && !o.gone) scare(o, beat.tieFear) }
   // ศรัทธาจาก chain เป็นเรื่องของปู่ตาโดยตรง (คนไหว้/เลิกไหว้) สายอื่นกินคนละทาง
-  if (beat.faith && w.avatar === 'pootah') w.faith = Math.max(0, w.faith + beat.faith)
+  if (beat.faith && w.avatar === 'pootah' && !w.shared) w.faith = Math.max(0, w.faith + beat.faith)
   push(w, beat.text(c, w), !!beat.notable)
   void r
   return true
@@ -399,16 +416,7 @@ export function step(w: World) {
   if (!people.length) return
 
   // 1) รายได้ — แต่ละสายกินคนละอย่าง จึงอยากให้ความกลัวไปคนละทาง
-  const fear = cityFear(w)
-  if (w.avatar === 'ghost') {
-    w.faith += (people.reduce((n, c) => n + c.fear, 0) / 100) * 0.1 // ยิ่งเมืองกลัวยิ่งอิ่ม
-  } else if (w.avatar === 'shaman') {
-    w.faith += people.filter((c) => c.fear > 55).length * 0.2 // คนกลัวคือลูกค้า
-  } else if (w.avatar === 'police') {
-    w.faith += fear < 60 ? ((60 - fear) / 100) * 2 : 0 // เมืองสงบ = ผลงาน
-  } else {
-    for (const c of people) if (r() < c.fear / 260) w.faith += c.bornHere ? 0.9 : 0.6
-  }
+  if (!w.shared) w.faith += income(w, w.avatar, r)
 
   // การตามติดของผี
   if (w.tick % 24 === 0)
@@ -460,7 +468,7 @@ export function step(w: World) {
     }
 
   // 7) ศรัทธาที่ไม่ได้ใช้จางเอง — คนลืมเทพที่ไม่เคยแสดงตัว (กันศรัทธาบวมจนไม่ต้องตัดสินใจอะไร)
-  if (w.tick % 24 === 0) w.faith = Math.max(0, w.faith * 0.97)
+  if (w.tick % 24 === 0 && !w.shared) w.faith = Math.max(0, w.faith * 0.97)
 
   // 8) วงจรชีวิต — วันละครั้ง
   if (w.tick % 24 === 0) lifeCycle(w, r)
