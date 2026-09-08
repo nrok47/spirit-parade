@@ -27,3 +27,5 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: st
 .gone { opacity: .3; text-decoration: line-through; }
 .log { list-style: none; margin: 0; padding: 0; max-height: 70vh; overflow-y: auto; font-size: 13px; line-height: 1.6; }
 .log li { padding: 6px 0; border-bottom: 1px solid #241d19; }
+
+.log li.notable { color: #f0d9a8; border-left: 2px solid #a97c4a; padding-left: 8px; }

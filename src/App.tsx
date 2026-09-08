@@ -8,6 +8,7 @@ import {
   load,
   nudge,
   omen,
+  runToNotable,
   save,
   selfCheck,
   step,
@@ -32,7 +33,9 @@ export default function App() {
   const [speed, setSpeed] = useState(1)
   const [mode, setMode] = useState<'none' | 'ward'>('none')
   const ref = useRef(w)
-  ref.current = w
+  useEffect(() => {
+    ref.current = w
+  })
 
   useEffect(() => {
     if (!SPEEDS[speed]) return
@@ -98,6 +101,15 @@ export default function App() {
         <button disabled={faith < COST.omen} onClick={() => act(omen)}>
           ให้ลาง · {COST.omen}
         </button>
+        <button
+          onClick={() => {
+            const next = { ...w }
+            runToNotable(next)
+            setW(next)
+          }}
+        >
+          ⏭ ข้ามไปเรื่องถัดไป
+        </button>
         <span className="hint">คลิกชื่อชาวเมือง = ดลใจ ({COST.nudge})</span>
       </div>
 
@@ -130,7 +142,9 @@ export default function App() {
                   {c.spirit ? '👻' : '🧍'} {c.name}
                 </span>
                 <span className="job">
-                  {c.job} · {c.zone}
+                  {c.job} · {c.zone} · {c.trait}
+                  {c.partner !== null ? ' 💍' : ''}
+                  {c.bornHere ? ' ✨' : ''}
                 </span>
                 <span className="bar">
                   <i style={{ width: `${c.fear}%`, background: fearColor(c.fear) }} />
@@ -142,7 +156,9 @@ export default function App() {
 
         <ol className="log">
           {w.log.map((l, i) => (
-            <li key={w.tick - i}>{l}</li>
+            <li key={`${l.t}-${i}`} className={l.notable ? 'notable' : ''}>
+              {l.text}
+            </li>
           ))}
         </ol>
       </main>
