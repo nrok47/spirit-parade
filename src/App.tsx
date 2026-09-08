@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import {
   AGENT_RADIUS,
-  AVATARS,
   BOARD,
   HIRE,
   RADIUS,
@@ -53,38 +52,15 @@ if (import.meta.env.DEV) {
 
 const fearColor = (f: number) => (f >= 70 ? '#e05b4a' : f >= 40 ? '#e0a13a' : '#5aa46a')
 
-function AvatarPicker({ onPick }: { onPick: (id: AvatarId) => void }) {
-  return (
-    <div className="app picker">
-      <h1>Spirit Parade</h1>
-      <p className="lead">เมืองเดินของมันเอง คุณเลือกได้แค่ว่าจะเป็นใครในนั้น</p>
-      <div className="cards">
-        {AVATARS.map((a) => (
-          <button key={a.id} className="card" onClick={() => onPick(a.id)}>
-            <span className="icon">{a.icon}</span>
-            <b>{a.name}</b>
-            <span className="want">{a.want}</span>
-            <span className="income">{a.income}</span>
-            <span className="plist">{a.powers.map((p) => p.name).join(' · ')}</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 export default function App() {
   const [mode, setMode] = useState<'local' | 'shared'>(
     () => (localStorage.getItem('sp-mode') as 'local' | 'shared') ?? 'local',
   )
-  const [w, setW] = useState<World | null>(() => load(BASE_MS))
+  const [w, setW] = useState<World | null>(() => load(BASE_MS) ?? createWorld(Date.now() % 100000))
   const [speed, setSpeed] = useState(1)
   const [aim, setAim] = useState<Power | null>(null)
 
   // --- โลกร่วม ---
-  const [myAvatar, setMyAvatar] = useState<AvatarId | null>(
-    () => (localStorage.getItem('sp-avatar') as AvatarId) ?? null,
-  )
   const [acts, setActs] = useState<Action[]>([])
   const [shared, setShared] = useState<World | null>(null)
   const [players, setPlayers] = useState<Record<string, AvatarId>>({})
@@ -104,19 +80,18 @@ export default function App() {
 
   const rebuild = useCallback(
     (list: Action[]) => {
-      if (!myAvatar) return
       const { season, tick } = now()
-      const s = replay(season, tick, list, me(), myAvatar)
+      const s = replay(season, tick, list, me(), 'pootah')
       s.world.pos = posRef.current
       setShared(s.world)
       setPlayers(s.avatars)
     },
-    [myAvatar],
+    [],
   )
 
   // โลกร่วม: ดึงรายการที่คนอื่นใส่ทุก 8 วินาที แล้วเดินเวลาเองทุก tick
   useEffect(() => {
-    if (mode !== 'shared' || !myAvatar) return
+    if (mode !== 'shared') return
     let dead = false
     const pull = async () => {
       try {
@@ -137,7 +112,7 @@ export default function App() {
       clearInterval(p)
       clearInterval(t)
     }
-  }, [mode, myAvatar, rebuild])
+  }, [mode, rebuild])
 
   const doneLocal = mode === 'local' && !!w && seasonOver(w)
 
@@ -168,18 +143,6 @@ export default function App() {
     setMode(m)
     setAim(null)
   }
-
-  if (mode === 'shared' && !myAvatar)
-    return (
-      <AvatarPicker
-        onPick={(id) => {
-          localStorage.setItem('sp-avatar', id)
-          setMyAvatar(id)
-        }}
-      />
-    )
-  if (mode === 'local' && !w)
-    return <AvatarPicker onPick={(id) => setW(createWorld(Date.now() % 100000, id))} />
 
   const view = mode === 'shared' ? shared : w
   if (!view)
@@ -217,7 +180,7 @@ export default function App() {
       season,
       tick,
       player: me(),
-      avatar: myAvatar!,
+      avatar: 'pootah',
       power: p.key,
       target_citizen: c?.id ?? null,
       target_zone: z ?? null,
@@ -280,10 +243,9 @@ export default function App() {
             ))}
         </ol>
         <div className="powers">
-          <button onClick={() => setW(createWorld((w.seed * 31 + 7) % 100000, w.avatar, w.season + 1))}>
+          <button onClick={() => setW(createWorld((w.seed * 31 + 7) % 100000, 'pootah', w.season + 1))}>
             เริ่มฤดูที่ {w.season + 1}
           </button>
-          <button onClick={() => setW(null)}>เปลี่ยนตัวละคร</button>
         </div>
       </div>
     )

@@ -130,18 +130,23 @@ export const avatarName = (id: AvatarId) => AVATARS.find((a) => a.id === id)?.na
 // ponytail: กันโลกแตก — replay ด้วย input เดียวกันต้องได้เมืองเดียวกันเป๊ะ
 export function netSelfCheck() {
   const acts: Action[] = [
-    { season: 3, tick: 10, player: 'a', avatar: 'ghost', power: 'scare', target_citizen: 0, target_zone: null, px: 22, py: 62 },
-    { season: 3, tick: 40, player: 'b', avatar: 'police', power: 'patrol', target_citizen: null, target_zone: 'ซอยใน', px: 22, py: 62 },
-    { season: 3, tick: 90, player: 'a', avatar: 'ghost', power: 'haunt', target_citizen: 6, target_zone: null, px: 22, py: 62 },
+    { season: 3, tick: 60, player: 'a', avatar: 'pootah', power: 'hire_ghost', target_citizen: null, target_zone: null, px: 22, py: 62 },
+    { season: 3, tick: 120, player: 'b', avatar: 'pootah', power: 'hire_police', target_citizen: null, target_zone: null, px: 30, py: 26 },
+    { season: 3, tick: 150, player: 'a', avatar: 'pootah', power: 'settle_f', target_citizen: null, target_zone: null, px: 22, py: 62 },
   ]
-  const x = replay(3, 200, acts, 'a', 'ghost')
-  const y = replay(3, 200, acts, 'a', 'ghost')
+  const x = replay(3, 200, acts, 'a', 'pootah')
+  const y = replay(3, 200, acts, 'a', 'pootah')
   console.assert(JSON.stringify(x.world) === JSON.stringify(y.world), 'replay ต้อง deterministic — เมืองห้ามแตกกัน')
-  const z = replay(3, 200, acts, 'b', 'police')
+  const z = replay(3, 200, acts, 'b', 'pootah')
   console.assert(
     JSON.stringify(x.world.citizens) === JSON.stringify(z.world.citizens),
     'คนละคนดูเมืองเดียวกันต้องเห็นชาวเมืองเหมือนกัน',
   )
   console.assert(x.purse.a !== z.purse.b, 'ศรัทธาเป็นของแต่ละคน ไม่ใช่ของเมือง')
+  const mid = replay(3, 170, acts, 'a', 'pootah')
+  console.assert(
+    mid.world.agents.some((g) => g.by === 'a') && mid.world.agents.some((g) => g.by === 'b'),
+    'ตัวที่จ้างต้องรู้ว่าใครจ้าง',
+  )
   console.log('net selfCheck ผ่าน')
 }

@@ -40,7 +40,9 @@ export const AGENT_DAYS = 5
 export const AGENT_EVERY = 6 // ทำงานทุก 6 ชั่วโมง
 export const HOUSE_CAP = 3
 
-export type AvatarId = 'pootah' | 'ghost' | 'shaman' | 'police'
+// ผู้เล่นเป็นปู่ตาเสมอ — ผี/หมอผี/ตำรวจ ย้ายไปเป็นคนที่ 'จ้าง' ลงเมืองแทน (ดู HIRE)
+// เก็บ type ไว้เพราะตาราง actions ในโลกร่วมมีคอลัมน์ avatar อยู่แล้ว
+export type AvatarId = 'pootah'
 
 export type World = {
   seed: number
@@ -200,16 +202,10 @@ export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'poot
 }
 
 // รายได้ต่อ tick ของแต่ละสาย — แยกออกมาเพื่อให้โลกร่วม replay คิดศรัทธาให้ทีละคนได้
-export function income(w: World, avatar: AvatarId, r: () => number): number {
-  const people = alive(w)
-  if (avatar === 'ghost') return (people.reduce((n, c) => n + c.fear, 0) / 100) * 0.1 // ยิ่งเมืองกลัวยิ่งอิ่ม
-  if (avatar === 'shaman') return people.filter((c) => c.fear > 55).length * 0.2 // คนกลัวคือลูกค้า
-  if (avatar === 'police') {
-    const f = cityFear(w)
-    return f < 60 ? ((60 - f) / 100) * 2 : 0 // เมืองสงบ = ผลงาน
-  }
+export function income(w: World, _avatar: AvatarId, r: () => number): number {
+  // ปู่ตากินจากคนที่เซ่นไหว้ — ยิ่งกลัวยิ่งไหว้ คนที่เกิดในเมืองนี้ให้มากกว่า
   let n = 0
-  for (const c of people) if (r() < c.fear / 260) n += c.bornHere ? 0.9 : 0.6
+  for (const c of alive(w)) if (r() < c.fear / 260) n += c.bornHere ? 0.9 : 0.6
   return n
 }
 
@@ -670,125 +666,34 @@ export const AVATARS: {
       },
     ],
   },
-  {
-    id: 'ghost',
-    name: 'ผี',
-    icon: '👻',
-    want: 'อยากให้กลัวมากที่สุด',
-    income: 'อิ่มจากความกลัวรวมของทั้งเมือง — แต่คนหนีหมดก็ไม่เหลืออะไรให้หลอก',
-    powers: [
-      {
-        key: 'scare', name: 'หลอก', cost: 5, target: 'citizen', hint: 'กลัวพุ่งทันที',
-        run: (w, _r, c) => {
-          if (!c) return
-          scare(c, 18)
-          push(w, `[หลอก] ${c.name} เห็นอะไรบางอย่างในกระจกตอนกลางคืน`)
-        },
-      },
-      {
-        key: 'haunt', name: 'ตามติด', cost: 15, target: 'citizen', hint: 'กลัวเพิ่มเองทุกวัน 3 วัน',
-        run: (w, _r, c) => {
-          if (!c) return
-          w.haunt[c.id] = w.tick + 24 * 3
-          push(w, `[ตามติด] มีอะไรเดินตาม${c.name}กลับบ้านทุกคืน`, true)
-        },
-      },
-      {
-        key: 'enter', name: 'เข้าบ้าน', cost: 40, target: 'zone', hint: 'ทั้งย่านกลัวหนัก',
-        run: (w, _r, _c, z) => {
-          if (!z) return
-          for (const o of reach(w, z)) scare(o, 14)
-          push(w, `[เข้าบ้าน] คืนนี้ทุกหลังใน${z}ได้ยินเสียงเคาะประตูพร้อมกัน`, true)
-        },
-      },
-    ],
-  },
-  {
-    id: 'shaman',
-    name: 'หมอผี',
-    icon: '🔮',
-    want: 'อยากให้กลัวแล้วมาจ้างตัวเอง',
-    income: 'ได้ค่าจ้างจากคนที่กลัวเกิน 55 — ไม่มีใครกลัวก็ไม่มีใครจ้าง',
-    powers: [
-      {
-        key: 'cleanse', name: 'ปัดเป่า', cost: 10, target: 'citizen', hint: 'ลดกลัว + ได้ค่าจ้างถ้าเขากลัวจริง',
-        run: (w, _r, c) => {
-          if (!c) return
-          const paid = c.fear > 50
-          c.fear = clamp(c.fear - 25)
-          if (paid) w.faith += 18
-          push(
-            w,
-            paid
-              ? `[ปัดเป่า] ${c.name} จ่ายค่าครูแล้วนอนหลับได้เป็นคืนแรก`
-              : `[ปัดเป่า] ${c.name} รับของไปแบบงงๆ ไม่ได้กลัวอะไรตั้งแต่แรก`,
-          )
-        },
-      },
-      {
-        key: 'bless', name: 'ปลุกเสก', cost: 20, target: 'zone', hint: 'ทั้งย่านใจนิ่งขึ้น',
-        run: (w, _r, _c, z) => {
-          if (!z) return
-          for (const o of reach(w, z)) scare(o, -10)
-          push(w, `[ปลุกเสก] ของที่แจกไปทั่ว${z}เริ่มมีคนเชื่อว่าใช้ได้จริง`)
-        },
-      },
-      {
-        key: 'lie', name: 'โกหกว่ามีผี', cost: 5, target: 'zone', hint: 'ปั่นให้กลัว = สร้างลูกค้า',
-        run: (w, _r, _c, z) => {
-          if (!z) return
-          for (const o of reach(w, z)) scare(o, 12)
-          push(w, `[โกหกว่ามีผี] มีคนไปบอกว่า${z}มีของไม่ดี ต้องรีบแก้`, true)
-        },
-      },
-    ],
-  },
-  {
-    id: 'police',
-    name: 'ตำรวจ',
-    icon: '🚨',
-    want: 'อยากให้เมืองสงบที่สุด',
-    income: 'ได้ผลงานเมื่อความกลัวทั้งเมืองต่ำ — เมืองแตกตื่นคือความล้มเหลว',
-    powers: [
-      {
-        key: 'patrol', name: 'ลาดตระเวน', cost: 8, target: 'zone', hint: 'ทั้งย่านใจนิ่งขึ้น',
-        run: (w, _r, _c, z) => {
-          if (!z) return
-          for (const o of reach(w, z)) scare(o, -8)
-          push(w, `[ลาดตระเวน] มีรถวิ่งผ่าน${z}ทั้งคืน คนกล้าออกมานั่งหน้าบ้าน`)
-        },
-      },
-      {
-        key: 'hush', name: 'ปิดข่าวลือ', cost: 15, target: 'none', hint: 'หยุดเรื่องที่กำลังลาม 1 เรื่อง',
-        run: (w) => {
-          const run = w.runs.find((x) => {
-            const t = byId(w, x.who)
-            return t && citizenInRange(w, t)
-          })
-          if (!run) {
-            w.faith += 15 // ไม่มีอะไรให้หยุด = ไม่คิดเงิน
-            push(w, `[ปิดข่าวลือ] ตรวจแล้วไม่มีเรื่องอะไรกำลังลามในระยะที่ไปถึง`)
-            return
-          }
-          const c = byId(w, run.who)
-          w.runs = w.runs.filter((x) => x !== run)
-          w.faith += 20 // หยุดได้จริง = ผลงาน (ท่าไม้ตายต้องไม่ทำให้ยิ่งใช้ยิ่งจน)
-          push(w, `[ปิดข่าวลือ] เรื่องของ${c ? c.name : 'ใครบางคน'}ถูกสั่งไม่ให้พูดถึงอีก`, true)
-        },
-      },
-      {
-        key: 'raid', name: 'ตรวจค้น', cost: 25, target: 'none', hint: 'ยึดของกลาง ทั้งเมืองใจนิ่งขึ้น',
-        run: (w) => {
-          for (const o of reach(w)) scare(o, -6)
-          w.faith += 10
-          push(w, `[ตรวจค้น] ยึดของกลางจากคนที่อ้างว่าแก้ผีได้ ข่าวลงทั้งเมือง`, true)
-        },
-      },
-    ],
-  },
 ]
 
-// พลัง "จ้าง" ใช้ได้ทุกสาย — วางตรงจุดที่ผู้เล่นยืนอยู่
+// ย้ายคนธรรมดาเข้ามาอยู่ — ไม่ใช่ agent ไม่มีวง แค่เพิ่มคนลงเมืองแล้วเขาใช้ชีวิตของเขาเอง
+function settle(w: World, sex: 'ช' | 'ญ') {
+  const r = rng(w.seed + w.tick * 911 + w.nextId)
+  const zone = ZONES.reduce((best, z) => {
+    const [x, y] = ZONE_POS[z]
+    const [bx, by] = ZONE_POS[best]
+    return Math.hypot(w.pos.x - x, w.pos.y - y) < Math.hypot(w.pos.x - bx, w.pos.y - by) ? z : best
+  }, ZONES[0])
+  const c = newCitizen(
+    w,
+    pick(r, sex === 'ช' ? MALE : FEMALE),
+    sex,
+    zone,
+    pick(r, [...TRAITS]),
+    20 + Math.floor(r() * 20),
+    false,
+  )
+  const host = alive(w)[0]
+  c.ties = host ? [host.id] : []
+  w.citizens.push(c)
+  const h = build(w, r, zone, c.id)
+  h.x = Math.round(clamp(w.pos.x, 6, BOARD - 6))
+  h.y = Math.round(clamp(w.pos.y, 6, BOARD - 6))
+  push(w, `${sex === 'ช' ? 'ชาย' : 'หญิง'}ชื่อ ${c.name} มาปลูกบ้านอยู่${zone} เป็น${c.job}`, true)
+}
+
 export const SETTLE_POWERS: Power[] = (['ช', 'ญ'] as const).map((sex) => ({
   key: `settle_${sex === 'ช' ? 'm' : 'f'}`,
   name: sex === 'ช' ? 'ชวนชายมาอยู่' : 'ชวนหญิงมาอยู่',
@@ -798,6 +703,7 @@ export const SETTLE_POWERS: Power[] = (['ช', 'ญ'] as const).map((sex) => ({
   run: (w: World) => settle(w, sex),
 }))
 
+// พลัง "จ้าง" — วางคนลงตรงจุดที่ผู้เล่นยืนอยู่ แล้วเขาทำงานของเขาเอง
 export const HIRE_POWERS: Power[] = (Object.keys(HIRE) as AgentKind[]).map((kind) => ({
   key: `hire_${kind}`,
   name: `จ้าง${HIRE[kind].name}`,
@@ -817,24 +723,6 @@ export const HIRE_POWERS: Power[] = (Object.keys(HIRE) as AgentKind[]).map((kind
     push(w, `${HIRE[kind].icon} มี${HIRE[kind].name}มาปักหลักอยู่แถวนี้ ${AGENT_DAYS} วัน`, true)
   },
 }))
-
-// ย้ายคนธรรมดาเข้ามาอยู่ — ไม่ใช่ agent ไม่มีวง แค่เพิ่มคนลงเมืองแล้วเขาใช้ชีวิตของเขาเอง
-function settle(w: World, sex: 'ช' | 'ญ') {
-  const r = rng(w.seed + w.tick * 911 + w.nextId)
-  const zone = ZONES.reduce((best, z) => {
-    const [x, y] = ZONE_POS[z]
-    const [bx, by] = ZONE_POS[best]
-    return Math.hypot(w.pos.x - x, w.pos.y - y) < Math.hypot(w.pos.x - bx, w.pos.y - by) ? z : best
-  }, ZONES[0])
-  const c = newCitizen(w, pick(r, sex === 'ช' ? MALE : FEMALE), sex, zone, pick(r, [...TRAITS]), 20 + Math.floor(r() * 20), false)
-  const host = alive(w)[0]
-  c.ties = host ? [host.id] : []
-  w.citizens.push(c)
-  const h = build(w, r, zone, c.id)
-  h.x = Math.round(clamp(w.pos.x, 6, BOARD - 6))
-  h.y = Math.round(clamp(w.pos.y, 6, BOARD - 6))
-  push(w, `${sex === 'ช' ? 'ชาย' : 'หญิง'}ชื่อ ${c.name} มาปลูกบ้านอยู่${zone} เป็น${c.job}`, true)
-}
 
 export const avatarOf = (w: World) => AVATARS.find((a) => a.id === w.avatar)!
 export const powersOf = (w: World) => [...SETTLE_POWERS, ...HIRE_POWERS, ...avatarOf(w).powers]
@@ -952,45 +840,38 @@ export function selfCheck() {
   runToNotable(e)
   console.assert(e.log.length > n0, 'ข้ามไปเหตุการณ์สำคัญต้องเดินเวลาจริง')
 
-  const incomes: Record<string, number> = {}
-  for (const av of AVATARS) {
-    const g = createWorld(9, av.id)
-    g.citizens.forEach((c) => (c.fear = 70))
-    g.faith = 0
-    for (let i = 0; i < 240; i++) step(g)
-    incomes[av.id] = g.faith
+  const rich = createWorld(9)
+  rich.citizens.forEach((c) => (c.fear = 70))
+  rich.faith = 0
+  const poor = createWorld(9)
+  poor.citizens.forEach((c) => (c.fear = 5))
+  poor.faith = 0
+  for (let i = 0; i < 240; i++) {
+    step(rich)
+    step(poor)
   }
-  console.assert(incomes.ghost > 0 && incomes.shaman > 0, 'ผี/หมอผี ต้องมีรายได้ตอนเมืองกลัว')
-  console.assert(incomes.police < incomes.ghost, 'ตำรวจต้องไม่ได้ผลงานตอนเมืองกลัว')
+  console.assert(rich.faith > poor.faith, 'เมืองที่กลัวต้องให้ศรัทธามากกว่าเมืองที่สงบ')
 
-  const q = createWorld(5, 'ghost')
-  q.faith = 100
-  const t0 = q.citizens.find((x) => citizenInRange(q, x))!
-  castPower(q, 'haunt', t0)
-  console.assert(q.haunt[t0.id] > q.tick && q.faith === 85, 'ตามติดต้องติดตัวและหักศรัทธา 15')
-
-  const pol = createWorld(6, 'police')
-  pol.faith = 100
+  const pol = createWorld(6)
+  pol.faith = 200
   while (!pol.runs.length) step(pol)
   const target = byId(pol, pol.runs[0].who)!
   const [tx, ty] = citizenPos(pol, target)
   moveTo(pol, tx, ty)
-  const f0 = pol.faith
-  castPower(pol, 'hush')
-  console.assert(pol.faith > f0 && !pol.runs.length, 'ปิดข่าวลือที่หยุดได้จริงต้องได้ผลงานคืนมากกว่าค่าใช้จ่าย')
-  const pol2 = createWorld(6, 'police')
-  pol2.faith = 100
-  pol2.runs = []
-  castPower(pol2, 'hush')
-  console.assert(pol2.faith === 100, 'กดตอนไม่มีอะไรให้หยุด ต้องไม่คิดเงิน')
+  castPower(pol, 'hire_police')
+  for (let i = 0; i < 24 * 3; i++) step(pol)
+  console.assert(
+    pol.log.some((l) => l.text.includes('[ตำรวจ]')),
+    'ตำรวจที่จ้างมาต้องปิดข่าวลือที่กำลังลามได้เอง',
+  )
 
-  const b1 = createWorld(11, 'ghost')
+  const b1 = createWorld(11)
   b1.faith = 100
   const far = b1.citizens.find((c) => !citizenInRange(b1, c))
   console.assert(!!far, 'ต้องมีคนที่อยู่นอกรัศมีตั้งแต่ต้นเกม ไม่งั้นรัศมีไม่มีความหมาย')
-  if (far) console.assert(!castPower(b1, 'scare', far), 'พรต้องใช้กับคนนอกวงไม่ได้')
+  if (far) console.assert(!castPower(b1, 'nudge', far), 'พรต้องใช้กับคนนอกวงไม่ได้')
   const near = b1.citizens.find((c) => citizenInRange(b1, c))!
-  console.assert(castPower(b1, 'scare', near), 'คนในวงต้องใช้ได้')
+  console.assert(castPower(b1, 'nudge', near), 'คนในวงต้องใช้ได้')
   moveTo(b1, ZONE_POS['ท่าน้ำ'][0], ZONE_POS['ท่าน้ำ'][1])
   console.assert(inRange(b1, ZONE_POS['ท่าน้ำ'][0], ZONE_POS['ท่าน้ำ'][1]), 'ย้ายไปแล้วต้องเอื้อมถึงที่นั่น')
 
@@ -1005,7 +886,7 @@ export function selfCheck() {
     'คนที่ยังอยู่ต้องมีบ้านทุกคน',
   )
 
-  const ag = createWorld(21, 'pootah')
+  const ag = createWorld(21)
   ag.faith = 300
   const victim = ag.citizens.find((c) => citizenInRange(ag, c) && !c.spirit)!
   const f1 = victim.fear
@@ -1019,17 +900,19 @@ export function selfCheck() {
   for (let i = 0; i < 24 * (AGENT_DAYS + 1); i++) step(ag)
   console.assert(ag.agents.length === 0, 'หมดสัญญาแล้วต้องหายไปเอง')
 
-  const d1 = createWorld(22, 'pootah')
-  const d2 = createWorld(22, 'pootah')
+  const d1 = createWorld(22)
+  const d2 = createWorld(22)
   for (const g of [d1, d2]) {
     g.faith = 300
     castPower(g, 'hire_shaman')
     castPower(g, 'hire_police')
     for (let i = 0; i < 24 * 6; i++) step(g)
   }
-  console.assert(JSON.stringify(d1) === JSON.stringify(d2), 'ตัวละครที่จ้างมาต้องตัดสินใจแบบ deterministic')
+  // savedAt เป็นเวลาเครื่อง ไม่ใช่ส่วนหนึ่งของโลก — ตัดออกก่อนเทียบ (ดูกฎเหล็ก)
+  const bare = (g: World) => JSON.stringify({ ...g, savedAt: 0 })
+  console.assert(bare(d1) === bare(d2), 'ตัวละครที่จ้างมาต้องตัดสินใจแบบ deterministic')
 
-  const st = createWorld(31, 'pootah')
+  const st = createWorld(31)
   st.faith = 200
   const nStart = alive(st).length
   console.assert(castPower(st, 'settle_f'), 'ชวนคนมาอยู่ต้องได้')
@@ -1039,14 +922,14 @@ export function selfCheck() {
   )
   console.assert(alive(st).some((c) => c.sex === 'ญ'), 'ชวนหญิงต้องได้หญิง')
 
-  const th = createWorld(32, 'pootah')
+  const th = createWorld(32)
   th.faith = 200
   const fearBefore = cityFear(th)
   castPower(th, 'hire_thief')
   for (let i = 0; i < 24 * 2; i++) step(th)
   console.assert(cityFear(th) > fearBefore, 'ขโมยต้องทำให้เมืองกลัวขึ้นเอง')
 
-  const mk = createWorld(32, 'pootah')
+  const mk = createWorld(32)
   mk.citizens.forEach((c) => (c.fear = 60))
   mk.faith = 200
   const calmBefore = cityFear(mk)
