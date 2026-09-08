@@ -218,7 +218,8 @@ export default function App() {
       return
     }
     // โลกร่วม: ลองในเครื่องก่อน ผ่านแล้วค่อยส่งขึ้นไป
-    const probe = { ...view }
+    // ต้อง clone ลึก — { ...view } แชร์ citizens/agents/log กับของจริง การลองจะไปแก้เมืองที่แสดงอยู่
+    const probe = structuredClone(view)
     if (!castPower(probe, p.key, c, z)) {
       setAim(null)
       return

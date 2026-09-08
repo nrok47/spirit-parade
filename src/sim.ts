@@ -711,6 +711,15 @@ export const HIRE_POWERS: Power[] = (Object.keys(HIRE) as AgentKind[]).map((kind
   target: 'none' as const,
   hint: `${HIRE[kind].does} · อยู่ ${AGENT_DAYS} วัน`,
   run: (w: World) => {
+    // ห้ามซ้อนอาชีพเดียวกันในวงเดียวกัน — ไม่งั้นกลยุทธ์ที่ดีที่สุดคือจ้างซ้ำที่เดิมรัวๆ
+    const stacked = w.agents.find(
+      (g) => g.kind === kind && Math.hypot(g.x - w.pos.x, g.y - w.pos.y) < AGENT_RADIUS,
+    )
+    if (stacked) {
+      w.faith += HIRE[kind].cost // คืนเงิน ไม่ได้จ้าง
+      push(w, `แถวนี้มี${HIRE[kind].name}อยู่แล้ว ไปยืนให้ห่างกว่านี้ก่อน`)
+      return
+    }
     w.agents.push({
       id: w.nextAgent++,
       kind,
@@ -774,7 +783,8 @@ function doWard(w: World, zone: Zone) {
 export const ward = (w: World, zone: Zone) => castPower(w, 'ward', undefined, zone)
 
 function doOmen(w: World) {
-  for (const c of reach(w)) scare(c, 12)
+  // ให้ลาง = พลังทั้งเมืองโดยตั้งใจ (ข้อยกเว้นเดียวของกฎรัศมี) เพราะ omenUntil กันคนหนีทั้งเมืองอยู่แล้ว
+  for (const c of alive(w)) scare(c, 12)
   w.omenUntil = w.tick + 24
   push(w, '[ให้ลาง] ทั้งเมืองฝันเหมือนกันคืนนี้ ทุกคนตื่นมาด้วยความกลัว แต่ไม่มีใครออกไปไหน', true)
 }
@@ -954,6 +964,27 @@ export function selfCheck() {
 
   const legacy = { ...createWorld(41), avatar: 'shaman' as AvatarId }
   console.assert(!!avatarOf(legacy) && powersOf(legacy).length > 0, 'save เก่าที่เป็นสายอื่นต้องเปิดได้ ไม่พังทั้งจอ')
+
+  const om = createWorld(61)
+  om.faith = 100
+  moveTo(om, 0, 0) // ยืนมุมกระดาน ไม่มีใครอยู่ในวง
+  const farFear = om.citizens.find((c) => !citizenInRange(om, c))!.fear
+  castPower(om, 'omen')
+  console.assert(
+    om.citizens.some((c) => !citizenInRange(om, c) && c.fear > farFear),
+    'ให้ลางต้องถึงคนนอกวงด้วย (พลังทั้งเมืองตามที่ออกแบบ)',
+  )
+
+  const stack = createWorld(62)
+  stack.faith = 300
+  castPower(stack, 'hire_monk')
+  const paid = stack.faith
+  castPower(stack, 'hire_monk')
+  console.assert(stack.agents.length === 1, 'ห้ามซ้อนอาชีพเดียวกันในวงเดียวกัน')
+  console.assert(stack.faith === paid, 'ซ้อนไม่ได้ต้องคืนเงิน ไม่ใช่เก็บเงินฟรี')
+  moveTo(stack, 5, 95)
+  castPower(stack, 'hire_monk')
+  console.assert(stack.agents.length === 2, 'วางห่างกันต้องจ้างซ้ำอาชีพเดิมได้')
 
   // PIN แยกเมืองในเครื่องเดียวกัน
   const wA = createWorld(51)
