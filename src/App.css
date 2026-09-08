@@ -46,3 +46,20 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: st
 .summary { display: flex; gap: 24px; flex-wrap: wrap; margin: 16px 0 8px; }
 .citizens button.pick { border-color: #a97c4a; }
 .citizens button.pick:hover { background: #33261c; }
+
+.board { width: 100%; aspect-ratio: 1; background: #1b1512; border: 1px solid #3a2f28; border-radius: 8px; cursor: crosshair; user-select: none; }
+.board .ground { fill: #1b1512; }
+.board .zlabel { fill: #6b5a4a; font-size: 3.4px; text-anchor: middle; pointer-events: none; }
+.board .halo { fill: rgba(169, 124, 74, .1); stroke: #a97c4a; stroke-width: .5; stroke-dasharray: 2 1.6; pointer-events: none; }
+.board .house { fill: #2a211b; stroke-width: .7; }
+.board .house.warded { fill: #2b3a2b; }
+.board .dot { stroke: #14100f; stroke-width: .4; }
+.board .dot.spirit { stroke: #cbb6ff; stroke-width: .7; }
+.board .dot.pick { cursor: pointer; stroke: #fff; stroke-width: .8; }
+.board .avatar circle { fill: #6b4a2a; stroke: #e8ded2; stroke-width: .6; }
+.board .avatar text { font-size: 4px; text-anchor: middle; pointer-events: none; }
+.zone.far { opacity: .4; }
+.roster { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 12px 0 0; margin: 12px 0 0; border-top: 1px solid #241d19; font-size: 12px; }
+.roster li { display: flex; align-items: center; gap: 4px; }
+.roster li.out { opacity: .4; }
+.roster i { width: 20px; height: 3px; border-radius: 2px; display: inline-block; }

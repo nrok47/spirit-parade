@@ -28,6 +28,10 @@ export type Citizen = {
 
 export type ChainRun = { chain: number; step: number; who: number; at: number }
 
+// บ้าน 1 หลังอยู่ได้ไม่เกิน 3 คน (พ่อ แม่ ลูก) — โตแล้วต้องแยกออกไปปลูกบ้านใหม่
+export type House = { id: number; x: number; y: number; zone: Zone; members: number[] }
+export const HOUSE_CAP = 3
+
 export type AvatarId = 'pootah' | 'ghost' | 'shaman' | 'police'
 
 export type World = {
@@ -35,6 +39,9 @@ export type World = {
   avatar: AvatarId
   season: number
   haunt: Record<number, number> // citizen id -> tick ที่การตามติดหมดฤทธิ์
+  houses: House[]
+  nextHouse: number
+  pos: { x: number; y: number } // ที่ที่ avatar ยืนอยู่บนกระดาน
   tick: number // 1 tick = 1 ชั่วโมงในเมือง
   faith: number
   nextId: number
@@ -51,6 +58,33 @@ const LEAVE_FEAR = 85
 const GROW_FEAR = 55 // เมืองกลัวเกินนี้ = ไม่มีใครแต่งงาน/มีลูก/ย้ายเข้า
 const EVENT_COOLDOWN = 8 // ชั่วโมง
 export const SEASON_DAYS = 30
+export const BOARD = 100
+export const RADIUS = 26 // พรทำงานเฉพาะในวงรอบตัว — นอกวงเอื้อมไม่ถึง
+
+// จุดกลางของแต่ละย่านบนกระดาน
+export const ZONE_POS: Record<Zone, [number, number]> = {
+  ตลาด: [30, 26],
+  ศาลปู่ตา: [52, 50],
+  ซอยใน: [22, 62],
+  โกดัง: [76, 30],
+  ใต้สะพาน: [74, 72],
+  ท่าน้ำ: [46, 86],
+}
+
+const dist = (ax: number, ay: number, bx: number, by: number) => Math.hypot(ax - bx, ay - by)
+export const inRange = (w: World, x: number, y: number) => dist(w.pos.x, w.pos.y, x, y) <= RADIUS
+export const houseOf = (w: World, id: number) => w.houses.find((h) => h.members.includes(id))
+export function citizenPos(w: World, c: Citizen): [number, number] {
+  const h = houseOf(w, c.id)
+  return h ? [h.x, h.y] : ZONE_POS[c.zone]
+}
+export const citizenInRange = (w: World, c: Citizen) => {
+  const [x, y] = citizenPos(w, c)
+  return inRange(w, x, y)
+}
+// คนที่พรเอื้อมถึงจริง
+export const reach = (w: World, zone?: Zone) =>
+  alive(w).filter((c) => citizenInRange(w, c) && (!zone || c.zone === zone))
 export const seasonOver = (w: World) => w.tick >= SEASON_DAYS * 24
 
 function rng(seed: number) {
@@ -116,11 +150,25 @@ export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'poot
     c.ties = near.slice(0, 2).map((o) => o.id)
     if (!c.ties.length) c.ties = [citizens[(c.id + 1) % citizens.length].id]
   }
+  const r0 = rng(seed)
+  const houses: House[] = citizens.map((c, i) => {
+    const [zx, zy] = ZONE_POS[c.zone]
+    return {
+      id: i,
+      x: Math.round(zx + (r0() - 0.5) * 22),
+      y: Math.round(zy + (r0() - 0.5) * 22),
+      zone: c.zone,
+      members: [c.id],
+    }
+  })
   return {
     seed,
     avatar,
     season,
     haunt: {},
+    houses,
+    nextHouse: houses.length,
+    pos: { x: ZONE_POS['ศาลปู่ตา'][0], y: ZONE_POS['ศาลปู่ตา'][1] },
     tick: 0,
     faith: 30,
     nextId: citizens.length,
@@ -224,6 +272,25 @@ function playBeat(w: World, run: ChainRun, r: () => number) {
 }
 
 // --- วงจรชีวิต: เมืองโตด้วยคน ไม่ใช่ด้วยตึก ---
+function build(w: World, r: () => number, zone: Zone, member: number): House {
+  const [zx, zy] = ZONE_POS[zone]
+  const h: House = {
+    id: w.nextHouse++,
+    x: Math.round(clamp(zx + (r() - 0.5) * 26, 6, BOARD - 6)),
+    y: Math.round(clamp(zy + (r() - 0.5) * 26, 6, BOARD - 6)),
+    zone,
+    members: [member],
+  }
+  w.houses.push(h)
+  return h
+}
+
+function leaveHouse(w: World, id: number) {
+  const h = houseOf(w, id)
+  if (!h) return
+  h.members = h.members.filter((m) => m !== id)
+  if (!h.members.length) w.houses = w.houses.filter((x) => x !== h)
+}
 function newCitizen(w: World, name: string, zone: Zone, trait: Trait, age: number, bornHere: boolean): Citizen {
   return {
     id: w.nextId++,
@@ -258,7 +325,17 @@ function lifeCycle(w: World, r: () => number) {
         b.partner = a.id
         if (!a.ties.includes(b.id)) a.ties.push(b.id)
         if (!b.ties.includes(a.id)) b.ties.push(a.id)
-        w.faith += 5
+        if (w.avatar === 'pootah') w.faith += 5
+        // ย้ายมาอยู่บ้านเดียวกัน ถ้าบ้านฝ่ายหญิง/ชายเต็มก็ปลูกใหม่
+        const ha = houseOf(w, a.id)
+        leaveHouse(w, b.id)
+        if (ha && ha.members.length < HOUSE_CAP) {
+          ha.members.push(b.id)
+        } else {
+          leaveHouse(w, a.id)
+          build(w, r, a.zone, a.id).members.push(b.id)
+        }
+        b.zone = a.zone
         push(w, `${a.name} กับ ${b.name} แต่งงานกันที่ศาลปู่ตา`, true)
       }
     }
@@ -266,7 +343,10 @@ function lifeCycle(w: World, r: () => number) {
 
   // มีลูก
   if (!stalled && r() < 0.09) {
-    const parent = people.find((c) => c.partner !== null && c.fear < 50 && c.age < 45)
+    const parent = people.find((c) => {
+      const h = houseOf(w, c.id)
+      return c.partner !== null && c.fear < 50 && c.age < 45 && !!h && h.members.length < HOUSE_CAP
+    })
     const other = parent && byId(w, parent.partner!)
     if (parent && other && !other.gone) {
       const kid = newCitizen(w, pick(r, NEW_NAMES), parent.zone, pick(r, [...TRAITS]), 0, true)
@@ -274,6 +354,7 @@ function lifeCycle(w: World, r: () => number) {
       parent.ties.push(kid.id)
       other.ties.push(kid.id)
       w.citizens.push(kid)
+      houseOf(w, parent.id)!.members.push(kid.id)
       push(w, `${parent.name} กับ ${other.name} มีลูก ตั้งชื่อว่า "${kid.name}"`, true)
     }
   }
@@ -284,6 +365,7 @@ function lifeCycle(w: World, r: () => number) {
     const host = pick(r, people)
     c.ties = host ? [host.id] : []
     w.citizens.push(c)
+    build(w, r, c.zone, c.id)
     push(w, `มีคนย้ายเข้ามาอยู่${c.zone} ชื่อ ${c.name} เป็น${c.job}`, true)
   }
 
@@ -291,9 +373,15 @@ function lifeCycle(w: World, r: () => number) {
   if (day(w) % 30 === 0) {
     for (const c of alive(w)) {
       c.age++
-      if (c.job === 'เด็ก' && c.age >= 15) c.job = JOBS[c.id % JOBS.length]
+      if (c.job === 'เด็ก' && c.age >= 15) {
+        c.job = JOBS[c.id % JOBS.length]
+        leaveHouse(w, c.id)
+        build(w, r, c.zone, c.id)
+        push(w, `${c.name} โตพอจะแยกออกไปปลูกบ้านของตัวเองแล้ว`, true)
+      }
       if (!c.spirit && c.age > 72 && r() < 0.25) {
         c.gone = true
+        leaveHouse(w, c.id)
         for (const id of c.ties) { const o = byId(w, id); if (o && !o.gone) scare(o, 14) }
         push(w, `${c.name} สิ้นอายุขัยอย่างสงบที่${c.zone}`, true)
       }
@@ -358,6 +446,7 @@ export function step(w: World) {
     for (const c of people)
       if (c.fear >= LEAVE_FEAR && r() < 0.06) {
         c.gone = true
+        leaveHouse(w, c.id)
         w.faith = Math.max(0, w.faith - 10)
         for (const id of c.ties) { const o = byId(w, id); if (o && !o.gone) scare(o, 12) }
         push(w, `${c.name} เก็บของออกจากเมืองไปกลางดึก ไม่บอกใคร`, true)
@@ -453,7 +542,7 @@ export const AVATARS: {
         key: 'enter', name: 'เข้าบ้าน', cost: 40, target: 'zone', hint: 'ทั้งย่านกลัวหนัก',
         run: (w, _r, _c, z) => {
           if (!z) return
-          for (const o of alive(w)) if (o.zone === z) scare(o, 14)
+          for (const o of reach(w, z)) scare(o, 14)
           push(w, `[เข้าบ้าน] คืนนี้ทุกหลังใน${z}ได้ยินเสียงเคาะประตูพร้อมกัน`, true)
         },
       },
@@ -485,7 +574,7 @@ export const AVATARS: {
         key: 'bless', name: 'ปลุกเสก', cost: 20, target: 'zone', hint: 'ทั้งย่านใจนิ่งขึ้น',
         run: (w, _r, _c, z) => {
           if (!z) return
-          for (const o of alive(w)) if (o.zone === z) scare(o, -10)
+          for (const o of reach(w, z)) scare(o, -10)
           push(w, `[ปลุกเสก] ของที่แจกไปทั่ว${z}เริ่มมีคนเชื่อว่าใช้ได้จริง`)
         },
       },
@@ -493,7 +582,7 @@ export const AVATARS: {
         key: 'lie', name: 'โกหกว่ามีผี', cost: 5, target: 'zone', hint: 'ปั่นให้กลัว = สร้างลูกค้า',
         run: (w, _r, _c, z) => {
           if (!z) return
-          for (const o of alive(w)) if (o.zone === z) scare(o, 12)
+          for (const o of reach(w, z)) scare(o, 12)
           push(w, `[โกหกว่ามีผี] มีคนไปบอกว่า${z}มีของไม่ดี ต้องรีบแก้`, true)
         },
       },
@@ -510,17 +599,20 @@ export const AVATARS: {
         key: 'patrol', name: 'ลาดตระเวน', cost: 8, target: 'zone', hint: 'ทั้งย่านใจนิ่งขึ้น',
         run: (w, _r, _c, z) => {
           if (!z) return
-          for (const o of alive(w)) if (o.zone === z) scare(o, -8)
+          for (const o of reach(w, z)) scare(o, -8)
           push(w, `[ลาดตระเวน] มีรถวิ่งผ่าน${z}ทั้งคืน คนกล้าออกมานั่งหน้าบ้าน`)
         },
       },
       {
         key: 'hush', name: 'ปิดข่าวลือ', cost: 15, target: 'none', hint: 'หยุดเรื่องที่กำลังลาม 1 เรื่อง',
         run: (w) => {
-          const run = w.runs[0]
+          const run = w.runs.find((x) => {
+            const t = byId(w, x.who)
+            return t && citizenInRange(w, t)
+          })
           if (!run) {
             w.faith += 15 // ไม่มีอะไรให้หยุด = ไม่คิดเงิน
-            push(w, `[ปิดข่าวลือ] ตรวจแล้วไม่มีเรื่องอะไรกำลังลาม`)
+            push(w, `[ปิดข่าวลือ] ตรวจแล้วไม่มีเรื่องอะไรกำลังลามในระยะที่ไปถึง`)
             return
           }
           const c = byId(w, run.who)
@@ -532,7 +624,7 @@ export const AVATARS: {
       {
         key: 'raid', name: 'ตรวจค้น', cost: 25, target: 'none', hint: 'ยึดของกลาง ทั้งเมืองใจนิ่งขึ้น',
         run: (w) => {
-          for (const o of alive(w)) scare(o, -6)
+          for (const o of reach(w)) scare(o, -6)
           w.faith += 10
           push(w, `[ตรวจค้น] ยึดของกลางจากคนที่อ้างว่าแก้ผีได้ ข่าวลงทั้งเมือง`, true)
         },
@@ -543,11 +635,15 @@ export const AVATARS: {
 
 export const avatarOf = (w: World) => AVATARS.find((a) => a.id === w.avatar)!
 
+export function moveTo(w: World, x: number, y: number) {
+  w.pos = { x: clamp(Math.round(x), 0, BOARD), y: clamp(Math.round(y), 0, BOARD) }
+}
+
 export function castPower(w: World, key: string, c?: Citizen, z?: Zone) {
   const p = avatarOf(w).powers.find((x) => x.key === key)
   if (!p || w.faith < p.cost) return false
-  if (p.target === 'citizen' && (!c || c.gone)) return false
-  if (p.target === 'zone' && !z) return false
+  if (p.target === 'citizen' && (!c || c.gone || !citizenInRange(w, c))) return false
+  if (p.target === 'zone' && (!z || !inRange(w, ZONE_POS[z][0], ZONE_POS[z][1]))) return false
   w.faith -= p.cost
   p.run(w, rng(w.seed + w.tick * 31 + (c?.id ?? 0)), c, z)
   return true
@@ -585,7 +681,7 @@ function doWard(w: World, zone: Zone) {
 export const ward = (w: World, zone: Zone) => castPower(w, 'ward', undefined, zone)
 
 function doOmen(w: World) {
-  for (const c of alive(w)) scare(c, 12)
+  for (const c of reach(w)) scare(c, 12)
   w.omenUntil = w.tick + 24
   push(w, '[ให้ลาง] ทั้งเมืองฝันเหมือนกันคืนนี้ ทุกคนตื่นมาด้วยความกลัว แต่ไม่มีใครออกไปไหน', true)
 }
@@ -610,7 +706,7 @@ export function load(msPerTick: number): World | null {
   } catch {
     return null
   }
-  if (!w.runs || typeof w.nextId !== 'number' || !w.avatar) return null // save รุ่นเก่า ทิ้งได้
+  if (!w.runs || typeof w.nextId !== 'number' || !w.avatar || !w.houses) return null // save รุ่นเก่า ทิ้งได้
   const missed = Math.min(Math.floor((Date.now() - w.savedAt) / msPerTick), MAX_CATCHUP_TICKS)
   for (let i = 0; i < missed; i++) step(w)
   if (missed > 2) push(w, `— ปู่ตาไม่ได้มองมา ${Math.max(1, Math.floor(missed / 24))} วัน เมืองเดินของมันเอง —`, true)
@@ -636,6 +732,8 @@ export function selfCheck() {
 
   const c = createWorld(2)
   c.faith = 100
+  console.assert(!ward(c, 'ตลาด'), 'ย่านที่อยู่นอกวง ต้องปกปักไม่ได้')
+  moveTo(c, ZONE_POS['ตลาด'][0], ZONE_POS['ตลาด'][1])
   ward(c, 'ตลาด')
   console.assert((c.wards['ตลาด'] ?? 0) > c.tick && c.faith === 80, 'ปกปักต้องมีอายุและหักศรัทธา 20')
 
@@ -663,13 +761,16 @@ export function selfCheck() {
 
   const q = createWorld(5, 'ghost')
   q.faith = 100
-  const t0 = q.citizens[0]
+  const t0 = q.citizens.find((x) => citizenInRange(q, x))!
   castPower(q, 'haunt', t0)
   console.assert(q.haunt[t0.id] > q.tick && q.faith === 85, 'ตามติดต้องติดตัวและหักศรัทธา 15')
 
   const pol = createWorld(6, 'police')
   pol.faith = 100
   while (!pol.runs.length) step(pol)
+  const target = byId(pol, pol.runs[0].who)!
+  const [tx, ty] = citizenPos(pol, target)
+  moveTo(pol, tx, ty)
   const f0 = pol.faith
   castPower(pol, 'hush')
   console.assert(pol.faith > f0 && !pol.runs.length, 'ปิดข่าวลือที่หยุดได้จริงต้องได้ผลงานคืนมากกว่าค่าใช้จ่าย')
@@ -678,6 +779,27 @@ export function selfCheck() {
   pol2.runs = []
   castPower(pol2, 'hush')
   console.assert(pol2.faith === 100, 'กดตอนไม่มีอะไรให้หยุด ต้องไม่คิดเงิน')
+
+  const b1 = createWorld(11, 'ghost')
+  b1.faith = 100
+  const far = b1.citizens.find((c) => !citizenInRange(b1, c))
+  console.assert(!!far, 'ต้องมีคนที่อยู่นอกรัศมีตั้งแต่ต้นเกม ไม่งั้นรัศมีไม่มีความหมาย')
+  if (far) console.assert(!castPower(b1, 'scare', far), 'พรต้องใช้กับคนนอกวงไม่ได้')
+  const near = b1.citizens.find((c) => citizenInRange(b1, c))!
+  console.assert(castPower(b1, 'scare', near), 'คนในวงต้องใช้ได้')
+  moveTo(b1, ZONE_POS['ท่าน้ำ'][0], ZONE_POS['ท่าน้ำ'][1])
+  console.assert(inRange(b1, ZONE_POS['ท่าน้ำ'][0], ZONE_POS['ท่าน้ำ'][1]), 'ย้ายไปแล้วต้องเอื้อมถึงที่นั่น')
+
+  const hh = createWorld(12)
+  for (let i = 0; i < 24 * 120; i++) step(hh)
+  console.assert(
+    hh.houses.every((h) => h.members.length <= HOUSE_CAP && h.members.length > 0),
+    'บ้านต้องมี 1-3 คนเสมอ ไม่มีบ้านร้างค้างในระบบ',
+  )
+  console.assert(
+    alive(hh).every((c) => !!houseOf(hh, c.id)),
+    'คนที่ยังอยู่ต้องมีบ้านทุกคน',
+  )
 
   console.assert(!seasonOver(createWorld(1)), 'ฤดูเพิ่งเริ่มต้องยังไม่จบ')
 

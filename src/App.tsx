@@ -2,19 +2,26 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import {
   AVATARS,
+  BOARD,
+  RADIUS,
   SEASON_DAYS,
   ZONES,
+  ZONE_POS,
   alive,
   avatarOf,
+  castPower,
   cityFear,
+  citizenInRange,
   createWorld,
+  houseOf,
+  inRange,
   load,
+  moveTo,
   runToNotable,
   save,
   seasonOver,
   selfCheck,
   step,
-  castPower,
   type AvatarId,
   type Citizen,
   type Power,
@@ -52,7 +59,7 @@ function AvatarPicker({ onPick }: { onPick: (id: AvatarId) => void }) {
 export default function App() {
   const [w, setW] = useState<World | null>(() => load(BASE_MS))
   const [speed, setSpeed] = useState(1)
-  const [aim, setAim] = useState<Power | null>(null) // พลังที่รอเลือกเป้า
+  const [aim, setAim] = useState<Power | null>(null)
   const ref = useRef(w)
   useEffect(() => {
     ref.current = w
@@ -95,7 +102,6 @@ export default function App() {
     if (castPower(next, p.key, c, z)) setW(next)
     setAim(null)
   }
-
   const tapPower = (p: Power) => (p.target === 'none' ? fire(p) : setAim(aim?.key === p.key ? null : p))
 
   if (done) {
@@ -119,6 +125,10 @@ export default function App() {
           <div className="stat">
             <span>ศรัทธาที่เหลือ</span>
             <b>{faith}</b>
+          </div>
+          <div className="stat">
+            <span>หลังคาเรือน</span>
+            <b>{w.houses.length}</b>
           </div>
           <div className="stat">
             <span>เกิดในเมือง</span>
@@ -150,6 +160,15 @@ export default function App() {
     )
   }
 
+  // คลิกที่ว่างบนกระดาน = ย้ายตัวเองไปยืนตรงนั้น
+  const onBoard = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (aim) return
+    const r = e.currentTarget.getBoundingClientRect()
+    const next = { ...w }
+    moveTo(next, ((e.clientX - r.left) / r.width) * BOARD, ((e.clientY - r.top) / r.height) * BOARD)
+    setW(next)
+  }
+
   return (
     <div className="app">
       <header>
@@ -166,9 +185,7 @@ export default function App() {
           <b>{faith}</b>
         </div>
         <div className="stat">
-          <span>
-            ฤดู {w.season} · วันที่
-          </span>
+          <span>ฤดู {w.season} · วันที่</span>
           <b>
             {dayNo}
             <small>/{SEASON_DAYS}</small>
@@ -208,18 +225,22 @@ export default function App() {
           ⏭ ข้ามไปเรื่องถัดไป
         </button>
         <span className="hint">
-          {aim ? `เลือก${aim.target === 'zone' ? 'ย่าน' : 'คน'}ที่จะ${aim.name}` : me.want}
+          {aim
+            ? `เลือก${aim.target === 'zone' ? 'ย่าน' : 'คน'}ในวง เพื่อ${aim.name}`
+            : 'คลิกกระดานเพื่อย้ายไปยืนที่นั่น — พรทำงานเฉพาะในวง'}
         </span>
       </div>
 
       <div className="zones">
         {ZONES.map((z) => {
           const on = (w.wards[z] ?? 0) > w.tick
-          const pickable = aim?.target === 'zone'
+          const near = inRange(w, ZONE_POS[z][0], ZONE_POS[z][1])
+          const pickable = aim?.target === 'zone' && near
           return (
             <button
               key={z}
-              className={`zone ${on ? 'warded' : ''} ${pickable ? 'pick' : ''}`}
+              disabled={aim?.target === 'zone' && !near}
+              className={`zone ${on ? 'warded' : ''} ${pickable ? 'pick' : ''} ${near ? '' : 'far'}`}
               onClick={() => pickable && fire(aim, undefined, z as Zone)}
             >
               {on ? '🪬 ' : ''}
@@ -230,29 +251,63 @@ export default function App() {
       </div>
 
       <main>
-        <ul className="citizens">
-          {w.citizens.map((c) => {
-            const pickable = aim?.target === 'citizen' && !c.gone
+        <svg className="board" viewBox={`0 0 ${BOARD} ${BOARD}`} onClick={onBoard}>
+          <rect x="0" y="0" width={BOARD} height={BOARD} className="ground" />
+          {ZONES.map((z) => (
+            <text key={z} x={ZONE_POS[z][0]} y={ZONE_POS[z][1]} className="zlabel">
+              {z}
+            </text>
+          ))}
+
+          <circle cx={w.pos.x} cy={w.pos.y} r={RADIUS} className="halo" />
+
+          {w.houses.map((h) => {
+            const mem = h.members.map((id) => w.citizens.find((c) => c.id === id)).filter((c): c is Citizen => !!c)
+            const hot = Math.max(0, ...mem.map((c) => c.fear))
+            const warded = (w.wards[h.zone] ?? 0) > w.tick
             return (
-              <li key={c.id} className={c.gone ? 'gone' : ''}>
-                <button className={pickable ? 'pick' : ''} disabled={!pickable} onClick={() => pickable && fire(aim, c)}>
-                  <span className="who">
-                    {c.spirit ? '👻' : '🧍'} {c.name}
-                    {(w.haunt[c.id] ?? 0) > w.tick ? ' 🕯' : ''}
-                  </span>
-                  <span className="job">
-                    {c.job} · {c.zone} · {c.trait}
-                    {c.partner !== null ? ' 💍' : ''}
-                    {c.bornHere ? ' ✨' : ''}
-                  </span>
-                  <span className="bar">
-                    <i style={{ width: `${c.fear}%`, background: fearColor(c.fear) }} />
-                  </span>
-                </button>
-              </li>
+              <g key={h.id}>
+                <rect
+                  x={h.x - 2.4}
+                  y={h.y - 2.4}
+                  width="4.8"
+                  height="4.8"
+                  rx="1"
+                  className={`house ${warded ? 'warded' : ''}`}
+                  style={{ stroke: fearColor(hot) }}
+                />
+                {mem.map((c, i) => {
+                  const cx = h.x + (i - (mem.length - 1) / 2) * 3.2
+                  const cy = h.y + 5.4
+                  const pickable = aim?.target === 'citizen' && citizenInRange(w, c)
+                  return (
+                    <circle
+                      key={c.id}
+                      cx={cx}
+                      cy={cy}
+                      r={pickable ? 2.4 : 1.7}
+                      className={`dot ${c.spirit ? 'spirit' : ''} ${pickable ? 'pick' : ''}`}
+                      style={{ fill: fearColor(c.fear) }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (pickable) fire(aim, c)
+                      }}
+                    >
+                      <title>{`${c.spirit ? '👻' : '🧍'} ${c.name} · ${c.job} · ${c.trait} · กลัว ${Math.round(c.fear)}${
+                        (w.haunt[c.id] ?? 0) > w.tick ? ' · ถูกตามติด' : ''
+                      }`}</title>
+                    </circle>
+                  )
+                })}
+              </g>
             )
           })}
-        </ul>
+
+          <g className="avatar" transform={`translate(${w.pos.x} ${w.pos.y})`}>
+            <circle r="3.4" />
+            <text y="1.6">{me.icon}</text>
+          </g>
+        </svg>
 
         <ol className="log">
           {w.log.map((l, i) => (
@@ -262,6 +317,18 @@ export default function App() {
           ))}
         </ol>
       </main>
+
+      <ul className="roster">
+        {people.map((c) => (
+          <li key={c.id} className={houseOf(w, c.id) && citizenInRange(w, c) ? '' : 'out'}>
+            {c.spirit ? '👻' : '🧍'} {c.name}
+            <i style={{ background: fearColor(c.fear) }} />
+            {c.partner !== null ? '💍' : ''}
+            {c.bornHere ? '✨' : ''}
+            {(w.haunt[c.id] ?? 0) > w.tick ? '🕯' : ''}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
