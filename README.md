@@ -14,6 +14,8 @@ npm install
 npm run dev
 ```
 
+**เล่นออนไลน์:** https://nrok47.github.io/spirit-parade/ (deploy อัตโนมัติทุกครั้งที่ push ขึ้น main)
+
 Save อยู่ใน localStorage · เมืองเดินต่อตอนปิดเครื่อง (สูงสุด 3 วัน)
 
 ## Status — v0.9
