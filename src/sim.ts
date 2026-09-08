@@ -724,7 +724,8 @@ export const HIRE_POWERS: Power[] = (Object.keys(HIRE) as AgentKind[]).map((kind
   },
 }))
 
-export const avatarOf = (w: World) => AVATARS.find((a) => a.id === w.avatar)!
+// เผื่อ save เก่าที่เคยเลือกสายอื่นไว้ตอนที่ยังมีจอเลือกตัวละคร — ตกมาที่ปู่ตาเสมอ
+export const avatarOf = (w: World) => AVATARS.find((a) => a.id === w.avatar) ?? AVATARS[0]
 export const powersOf = (w: World) => [...SETTLE_POWERS, ...HIRE_POWERS, ...avatarOf(w).powers]
 
 export function moveTo(w: World, x: number, y: number) {
@@ -798,7 +799,8 @@ export function load(msPerTick: number): World | null {
   } catch {
     return null
   }
-  if (!w.runs || typeof w.nextId !== 'number' || !w.avatar || !w.houses || !w.agents) return null // save รุ่นเก่า ทิ้งได้
+  if (!w.runs || typeof w.nextId !== 'number' || !w.avatar || !w.houses || !w.agents) return null
+  w.avatar = 'pootah' // save เก่าอาจเป็นสายที่ลบไปแล้ว // save รุ่นเก่า ทิ้งได้
   const missed = Math.min(Math.floor((Date.now() - w.savedAt) / msPerTick), MAX_CATCHUP_TICKS)
   for (let i = 0; i < missed; i++) step(w)
   if (missed > 2) push(w, `— ปู่ตาไม่ได้มองมา ${Math.max(1, Math.floor(missed / 24))} วัน เมืองเดินของมันเอง —`, true)
@@ -948,6 +950,9 @@ export function selfCheck() {
     wed.citizens.every((c) => c.partner === null || byId(wed, c.partner)!.sex !== c.sex),
     'คู่ที่แต่งงานกันต้องต่างเพศ',
   )
+
+  const legacy = { ...createWorld(41), avatar: 'shaman' as AvatarId }
+  console.assert(!!avatarOf(legacy) && powersOf(legacy).length > 0, 'save เก่าที่เป็นสายอื่นต้องเปิดได้ ไม่พังทั้งจอ')
 
   console.assert(!seasonOver(createWorld(1)), 'ฤดูเพิ่งเริ่มต้องยังไม่จบ')
 
