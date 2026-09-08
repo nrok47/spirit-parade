@@ -519,11 +519,13 @@ export const AVATARS: {
         run: (w) => {
           const run = w.runs[0]
           if (!run) {
+            w.faith += 15 // ไม่มีอะไรให้หยุด = ไม่คิดเงิน
             push(w, `[ปิดข่าวลือ] ตรวจแล้วไม่มีเรื่องอะไรกำลังลาม`)
             return
           }
           const c = byId(w, run.who)
           w.runs = w.runs.filter((x) => x !== run)
+          w.faith += 20 // หยุดได้จริง = ผลงาน (ท่าไม้ตายต้องไม่ทำให้ยิ่งใช้ยิ่งจน)
           push(w, `[ปิดข่าวลือ] เรื่องของ${c ? c.name : 'ใครบางคน'}ถูกสั่งไม่ให้พูดถึงอีก`, true)
         },
       },
@@ -664,6 +666,18 @@ export function selfCheck() {
   const t0 = q.citizens[0]
   castPower(q, 'haunt', t0)
   console.assert(q.haunt[t0.id] > q.tick && q.faith === 85, 'ตามติดต้องติดตัวและหักศรัทธา 15')
+
+  const pol = createWorld(6, 'police')
+  pol.faith = 100
+  while (!pol.runs.length) step(pol)
+  const f0 = pol.faith
+  castPower(pol, 'hush')
+  console.assert(pol.faith > f0 && !pol.runs.length, 'ปิดข่าวลือที่หยุดได้จริงต้องได้ผลงานคืนมากกว่าค่าใช้จ่าย')
+  const pol2 = createWorld(6, 'police')
+  pol2.faith = 100
+  pol2.runs = []
+  castPower(pol2, 'hush')
+  console.assert(pol2.faith === 100, 'กดตอนไม่มีอะไรให้หยุด ต้องไม่คิดเงิน')
 
   console.assert(!seasonOver(createWorld(1)), 'ฤดูเพิ่งเริ่มต้องยังไม่จบ')
 
