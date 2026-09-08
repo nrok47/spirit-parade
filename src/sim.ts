@@ -28,8 +28,13 @@ export type Citizen = {
 
 export type ChainRun = { chain: number; step: number; who: number; at: number }
 
+export type AvatarId = 'pootah' | 'ghost' | 'shaman' | 'police'
+
 export type World = {
   seed: number
+  avatar: AvatarId
+  season: number
+  haunt: Record<number, number> // citizen id -> tick ที่การตามติดหมดฤทธิ์
   tick: number // 1 tick = 1 ชั่วโมงในเมือง
   faith: number
   nextId: number
@@ -41,11 +46,12 @@ export type World = {
   savedAt: number
 }
 
-export const COST = { nudge: 5, ward: 20, omen: 50 }
 const MAX_CATCHUP_TICKS = 24 * 3
 const LEAVE_FEAR = 85
 const GROW_FEAR = 55 // เมืองกลัวเกินนี้ = ไม่มีใครแต่งงาน/มีลูก/ย้ายเข้า
 const EVENT_COOLDOWN = 8 // ชั่วโมง
+export const SEASON_DAYS = 30
+export const seasonOver = (w: World) => w.tick >= SEASON_DAYS * 24
 
 function rng(seed: number) {
   let s = seed >>> 0
@@ -87,7 +93,8 @@ const ROSTER: [string, boolean, string, Zone, Trait, number][] = [
 const NEW_NAMES = ['น้ำ', 'บุญ', 'ต้อย', 'แดง', 'อ้อย', 'หนู', 'ก้อย', 'เปิ้ล', 'ตี๋', 'ดาว', 'ฝน', 'พลอย']
 const JOBS = ['ไรเดอร์', 'แม่ค้า', 'พ่อค้า', 'รปภ.', 'คนงานศาล', 'คนเดินระบบ']
 
-export function createWorld(seed = Date.now() % 100000): World {
+// ⚠️ seed มาจากข้างนอกเสมอ — ในโลกร่วมคือ seed ของฤดู ไม่ใช่ Date.now()
+export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'pootah', season = 1): World {
   const citizens: Citizen[] = ROSTER.map(([name, spirit, job, zone, trait, age], id) => ({
     id,
     name,
@@ -111,6 +118,9 @@ export function createWorld(seed = Date.now() % 100000): World {
   }
   return {
     seed,
+    avatar,
+    season,
+    haunt: {},
     tick: 0,
     faith: 30,
     nextId: citizens.length,
@@ -206,7 +216,8 @@ function playBeat(w: World, run: ChainRun, r: () => number) {
   if (beat.zoneFear)
     for (const o of alive(w)) if (o.zone === c.zone) scare(o, beat.zoneFear)
   if (beat.tieFear) for (const id of c.ties) { const o = byId(w, id); if (o && !o.gone) scare(o, beat.tieFear) }
-  if (beat.faith) w.faith = Math.max(0, w.faith + beat.faith)
+  // ศรัทธาจาก chain เป็นเรื่องของปู่ตาโดยตรง (คนไหว้/เลิกไหว้) สายอื่นกินคนละทาง
+  if (beat.faith && w.avatar === 'pootah') w.faith = Math.max(0, w.faith + beat.faith)
   push(w, beat.text(c, w), !!beat.notable)
   void r
   return true
@@ -299,8 +310,21 @@ export function step(w: World) {
   const people = alive(w)
   if (!people.length) return
 
-  // 1) ศรัทธา — ยิ่งกลัวยิ่งเซ่นไหว้ · คนที่เกิดในเมืองนี้ให้มากกว่า
-  for (const c of people) if (r() < c.fear / 260) w.faith += c.bornHere ? 0.9 : 0.6
+  // 1) รายได้ — แต่ละสายกินคนละอย่าง จึงอยากให้ความกลัวไปคนละทาง
+  const fear = cityFear(w)
+  if (w.avatar === 'ghost') {
+    w.faith += (people.reduce((n, c) => n + c.fear, 0) / 100) * 0.1 // ยิ่งเมืองกลัวยิ่งอิ่ม
+  } else if (w.avatar === 'shaman') {
+    w.faith += people.filter((c) => c.fear > 55).length * 0.2 // คนกลัวคือลูกค้า
+  } else if (w.avatar === 'police') {
+    w.faith += fear < 60 ? ((60 - fear) / 100) * 2 : 0 // เมืองสงบ = ผลงาน
+  } else {
+    for (const c of people) if (r() < c.fear / 260) w.faith += c.bornHere ? 0.9 : 0.6
+  }
+
+  // การตามติดของผี
+  if (w.tick % 24 === 0)
+    for (const c of people) if ((w.haunt[c.id] ?? 0) > w.tick) scare(c, 8)
 
   // 2) เดินบีตของ chain ที่ค้างอยู่
   for (const run of [...w.runs]) {
@@ -362,12 +386,173 @@ export function runToNotable(w: World, maxTicks = 48) {
   }
 }
 
-// --- พลังของเทพ: เอียงความน่าจะเป็น ไม่ใช่คำสั่ง ---
-export function nudge(w: World, id: number) {
-  const c = byId(w, id)
-  if (!c || c.gone || w.faith < COST.nudge) return false
-  w.faith -= COST.nudge
-  const r = rng(w.seed + w.tick * 31 + id)
+// --- Avatar & พลัง ---
+// ทุกพลัง = เอียงความน่าจะเป็น ไม่ใช่คำสั่ง · target บอก UI ว่าต้องให้เลือกอะไรก่อน
+export type Power = {
+  key: string
+  name: string
+  cost: number
+  target: 'citizen' | 'zone' | 'none'
+  hint: string
+  run: (w: World, r: () => number, c?: Citizen, z?: Zone) => void
+}
+
+export const AVATARS: {
+  id: AvatarId
+  name: string
+  icon: string
+  want: string
+  income: string
+  powers: Power[]
+}[] = [
+  {
+    id: 'pootah',
+    name: 'ปู่ตา',
+    icon: '🪬',
+    want: 'อยากให้กลัวพอดีๆ',
+    income: 'ได้ศรัทธาจากคนที่เซ่นไหว้ — ยิ่งกลัวยิ่งไหว้ แต่กลัวเกินคนหนี',
+    powers: [
+      {
+        key: 'nudge', name: 'ดลใจ', cost: 5, target: 'citizen', hint: 'สุ่มผล 4 ทาง',
+        run: (w, r, c) => c && doNudge(w, r, c),
+      },
+      {
+        key: 'ward', name: 'ปกปัก', cost: 20, target: 'zone', hint: 'ผีเข้าไม่ได้ 3 วัน',
+        run: (w, _r, _c, z) => z && doWard(w, z),
+      },
+      {
+        key: 'omen', name: 'ให้ลาง', cost: 50, target: 'none', hint: 'กลัวพุ่งทั้งเมือง แต่ไม่มีใครหนี 1 วัน',
+        run: (w) => doOmen(w),
+      },
+    ],
+  },
+  {
+    id: 'ghost',
+    name: 'ผี',
+    icon: '👻',
+    want: 'อยากให้กลัวมากที่สุด',
+    income: 'อิ่มจากความกลัวรวมของทั้งเมือง — แต่คนหนีหมดก็ไม่เหลืออะไรให้หลอก',
+    powers: [
+      {
+        key: 'scare', name: 'หลอก', cost: 5, target: 'citizen', hint: 'กลัวพุ่งทันที',
+        run: (w, _r, c) => {
+          if (!c) return
+          scare(c, 18)
+          push(w, `[หลอก] ${c.name} เห็นอะไรบางอย่างในกระจกตอนกลางคืน`)
+        },
+      },
+      {
+        key: 'haunt', name: 'ตามติด', cost: 15, target: 'citizen', hint: 'กลัวเพิ่มเองทุกวัน 3 วัน',
+        run: (w, _r, c) => {
+          if (!c) return
+          w.haunt[c.id] = w.tick + 24 * 3
+          push(w, `[ตามติด] มีอะไรเดินตาม${c.name}กลับบ้านทุกคืน`, true)
+        },
+      },
+      {
+        key: 'enter', name: 'เข้าบ้าน', cost: 40, target: 'zone', hint: 'ทั้งย่านกลัวหนัก',
+        run: (w, _r, _c, z) => {
+          if (!z) return
+          for (const o of alive(w)) if (o.zone === z) scare(o, 14)
+          push(w, `[เข้าบ้าน] คืนนี้ทุกหลังใน${z}ได้ยินเสียงเคาะประตูพร้อมกัน`, true)
+        },
+      },
+    ],
+  },
+  {
+    id: 'shaman',
+    name: 'หมอผี',
+    icon: '🔮',
+    want: 'อยากให้กลัวแล้วมาจ้างตัวเอง',
+    income: 'ได้ค่าจ้างจากคนที่กลัวเกิน 55 — ไม่มีใครกลัวก็ไม่มีใครจ้าง',
+    powers: [
+      {
+        key: 'cleanse', name: 'ปัดเป่า', cost: 10, target: 'citizen', hint: 'ลดกลัว + ได้ค่าจ้างถ้าเขากลัวจริง',
+        run: (w, _r, c) => {
+          if (!c) return
+          const paid = c.fear > 50
+          c.fear = clamp(c.fear - 25)
+          if (paid) w.faith += 18
+          push(
+            w,
+            paid
+              ? `[ปัดเป่า] ${c.name} จ่ายค่าครูแล้วนอนหลับได้เป็นคืนแรก`
+              : `[ปัดเป่า] ${c.name} รับของไปแบบงงๆ ไม่ได้กลัวอะไรตั้งแต่แรก`,
+          )
+        },
+      },
+      {
+        key: 'bless', name: 'ปลุกเสก', cost: 20, target: 'zone', hint: 'ทั้งย่านใจนิ่งขึ้น',
+        run: (w, _r, _c, z) => {
+          if (!z) return
+          for (const o of alive(w)) if (o.zone === z) scare(o, -10)
+          push(w, `[ปลุกเสก] ของที่แจกไปทั่ว${z}เริ่มมีคนเชื่อว่าใช้ได้จริง`)
+        },
+      },
+      {
+        key: 'lie', name: 'โกหกว่ามีผี', cost: 5, target: 'zone', hint: 'ปั่นให้กลัว = สร้างลูกค้า',
+        run: (w, _r, _c, z) => {
+          if (!z) return
+          for (const o of alive(w)) if (o.zone === z) scare(o, 12)
+          push(w, `[โกหกว่ามีผี] มีคนไปบอกว่า${z}มีของไม่ดี ต้องรีบแก้`, true)
+        },
+      },
+    ],
+  },
+  {
+    id: 'police',
+    name: 'ตำรวจ',
+    icon: '🚨',
+    want: 'อยากให้เมืองสงบที่สุด',
+    income: 'ได้ผลงานเมื่อความกลัวทั้งเมืองต่ำ — เมืองแตกตื่นคือความล้มเหลว',
+    powers: [
+      {
+        key: 'patrol', name: 'ลาดตระเวน', cost: 8, target: 'zone', hint: 'ทั้งย่านใจนิ่งขึ้น',
+        run: (w, _r, _c, z) => {
+          if (!z) return
+          for (const o of alive(w)) if (o.zone === z) scare(o, -8)
+          push(w, `[ลาดตระเวน] มีรถวิ่งผ่าน${z}ทั้งคืน คนกล้าออกมานั่งหน้าบ้าน`)
+        },
+      },
+      {
+        key: 'hush', name: 'ปิดข่าวลือ', cost: 15, target: 'none', hint: 'หยุดเรื่องที่กำลังลาม 1 เรื่อง',
+        run: (w) => {
+          const run = w.runs[0]
+          if (!run) {
+            push(w, `[ปิดข่าวลือ] ตรวจแล้วไม่มีเรื่องอะไรกำลังลาม`)
+            return
+          }
+          const c = byId(w, run.who)
+          w.runs = w.runs.filter((x) => x !== run)
+          push(w, `[ปิดข่าวลือ] เรื่องของ${c ? c.name : 'ใครบางคน'}ถูกสั่งไม่ให้พูดถึงอีก`, true)
+        },
+      },
+      {
+        key: 'raid', name: 'ตรวจค้น', cost: 25, target: 'none', hint: 'ยึดของกลาง ทั้งเมืองใจนิ่งขึ้น',
+        run: (w) => {
+          for (const o of alive(w)) scare(o, -6)
+          w.faith += 10
+          push(w, `[ตรวจค้น] ยึดของกลางจากคนที่อ้างว่าแก้ผีได้ ข่าวลงทั้งเมือง`, true)
+        },
+      },
+    ],
+  },
+]
+
+export const avatarOf = (w: World) => AVATARS.find((a) => a.id === w.avatar)!
+
+export function castPower(w: World, key: string, c?: Citizen, z?: Zone) {
+  const p = avatarOf(w).powers.find((x) => x.key === key)
+  if (!p || w.faith < p.cost) return false
+  if (p.target === 'citizen' && (!c || c.gone)) return false
+  if (p.target === 'zone' && !z) return false
+  w.faith -= p.cost
+  p.run(w, rng(w.seed + w.tick * 31 + (c?.id ?? 0)), c, z)
+  return true
+}
+
+// --- พลังฝั่งปู่ตา ---
+function doNudge(w: World, r: () => number, c: Citizen) {
   const roll = r()
   if (roll < 0.35) {
     c.fear = clamp(c.fear - 18)
@@ -386,25 +571,24 @@ export function nudge(w: World, id: number) {
     c.fear = clamp(c.fear - 2)
     push(w, `[ดลใจ] ${c.name} หยุดเดินกลางทาง มองไปรอบๆ แล้วเดินต่อเหมือนเดิม`)
   }
-  return true
 }
 
-export function ward(w: World, zone: Zone) {
-  if (w.faith < COST.ward) return false
-  w.faith -= COST.ward
+export const nudge = (w: World, id: number) => castPower(w, 'nudge', byId(w, id))
+
+function doWard(w: World, zone: Zone) {
   w.wards[zone] = w.tick + 24 * 3
   push(w, `[ปกปัก] มีบางอย่างคุ้มอยู่รอบ${zone} ผีเข้าไม่ได้ 3 วัน`)
-  return true
 }
 
-export function omen(w: World) {
-  if (w.faith < COST.omen) return false
-  w.faith -= COST.omen
+export const ward = (w: World, zone: Zone) => castPower(w, 'ward', undefined, zone)
+
+function doOmen(w: World) {
   for (const c of alive(w)) scare(c, 12)
   w.omenUntil = w.tick + 24
   push(w, '[ให้ลาง] ทั้งเมืองฝันเหมือนกันคืนนี้ ทุกคนตื่นมาด้วยความกลัว แต่ไม่มีใครออกไปไหน', true)
-  return true
 }
+
+export const omen = (w: World) => castPower(w, 'omen')
 
 // --- save / offline progress ---
 const KEY = 'spirit-parade-save'
@@ -414,16 +598,17 @@ export function save(w: World) {
   localStorage.setItem(KEY, JSON.stringify(w))
 }
 
-export function load(msPerTick: number): World {
+// คืน null เมื่อยังไม่เคยเล่น (หรือ save รุ่นเก่า) → ให้ UI ถามว่าจะเป็นใครก่อน
+export function load(msPerTick: number): World | null {
   const raw = localStorage.getItem(KEY)
-  if (!raw) return createWorld()
+  if (!raw) return null
   let w: World
   try {
     w = JSON.parse(raw) as World
   } catch {
-    return createWorld()
+    return null
   }
-  if (!w.runs || typeof w.nextId !== 'number') return createWorld() // save รุ่นเก่า ทิ้งได้
+  if (!w.runs || typeof w.nextId !== 'number' || !w.avatar) return null // save รุ่นเก่า ทิ้งได้
   const missed = Math.min(Math.floor((Date.now() - w.savedAt) / msPerTick), MAX_CATCHUP_TICKS)
   for (let i = 0; i < missed; i++) step(w)
   if (missed > 2) push(w, `— ปู่ตาไม่ได้มองมา ${Math.max(1, Math.floor(missed / 24))} วัน เมืองเดินของมันเอง —`, true)
@@ -462,6 +647,25 @@ export function selfCheck() {
   const n0 = e.log.length
   runToNotable(e)
   console.assert(e.log.length > n0, 'ข้ามไปเหตุการณ์สำคัญต้องเดินเวลาจริง')
+
+  const incomes: Record<string, number> = {}
+  for (const av of AVATARS) {
+    const g = createWorld(9, av.id)
+    g.citizens.forEach((c) => (c.fear = 70))
+    g.faith = 0
+    for (let i = 0; i < 240; i++) step(g)
+    incomes[av.id] = g.faith
+  }
+  console.assert(incomes.ghost > 0 && incomes.shaman > 0, 'ผี/หมอผี ต้องมีรายได้ตอนเมืองกลัว')
+  console.assert(incomes.police < incomes.ghost, 'ตำรวจต้องไม่ได้ผลงานตอนเมืองกลัว')
+
+  const q = createWorld(5, 'ghost')
+  q.faith = 100
+  const t0 = q.citizens[0]
+  castPower(q, 'haunt', t0)
+  console.assert(q.haunt[t0.id] > q.tick && q.faith === 85, 'ตามติดต้องติดตัวและหักศรัทธา 15')
+
+  console.assert(!seasonOver(createWorld(1)), 'ฤดูเพิ่งเริ่มต้องยังไม่จบ')
 
   console.log('sim selfCheck ผ่าน')
 }

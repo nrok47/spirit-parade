@@ -29,3 +29,20 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: st
 .log li { padding: 6px 0; border-bottom: 1px solid #241d19; }
 
 .log li.notable { color: #f0d9a8; border-left: 2px solid #a97c4a; padding-left: 8px; }
+
+.picker { max-width: 760px; padding-top: 40px; }
+.picker h1 { margin: 0 0 4px; font-size: 30px; letter-spacing: 1px; }
+.lead { opacity: .6; margin: 0 0 24px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.card { display: grid; gap: 5px; text-align: left; padding: 14px; align-content: start; }
+.card:hover { border-color: #a97c4a; }
+.card .icon { font-size: 28px; }
+.card b { font-size: 17px; }
+.card .want { font-size: 12px; color: #d7b48a; }
+.card .income { font-size: 11px; opacity: .55; line-height: 1.5; }
+.card .plist { font-size: 11px; opacity: .8; margin-top: 4px; border-top: 1px solid #3a2f28; padding-top: 6px; }
+.me { padding: 4px 10px; border: 1px solid #6b4a2a; border-radius: 20px; font-size: 13px; }
+.stat b small { font-size: 13px; opacity: .45; font-weight: normal; }
+.summary { display: flex; gap: 24px; flex-wrap: wrap; margin: 16px 0 8px; }
+.citizens button.pick { border-color: #a97c4a; }
+.citizens button.pick:hover { background: #33261c; }
