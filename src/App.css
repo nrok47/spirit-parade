@@ -66,3 +66,10 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: st
 
 .netbar { font-size: 12px; opacity: .7; margin-top: 10px; }
 .err { color: #e05b4a; }
+
+.board .agent circle:not(.arange) { fill: #241d19; stroke: #e8ded2; stroke-width: .4; }
+.board .agent text { font-size: 3.2px; text-anchor: middle; pointer-events: auto; }
+.board .arange { fill: none; stroke-width: .35; stroke-dasharray: 1.4 1.4; }
+.board .agent.ghost .arange { stroke: #8f7ad6; }
+.board .agent.shaman .arange { stroke: #d68f7a; }
+.board .agent.police .arange { stroke: #7aa8d6; }

@@ -30,6 +30,18 @@ export type ChainRun = { chain: number; step: number; who: number; at: number }
 
 // บ้าน 1 หลังอยู่ได้ไม่เกิน 3 คน (พ่อ แม่ ลูก) — โตแล้วต้องแยกออกไปปลูกบ้านใหม่
 export type House = { id: number; x: number; y: number; zone: Zone; members: number[] }
+
+// ตัวละครที่จ้างลงไปในเมือง แล้วมันทำงานของมันเอง — ผู้เล่นตัดสินใจแค่ จ้างใคร วางตรงไหน
+export type AgentKind = 'ghost' | 'shaman' | 'police'
+export type Agent = { id: number; kind: AgentKind; by: string; x: number; y: number; until: number; next: number }
+export const AGENT_RADIUS = 18
+export const AGENT_DAYS = 5
+export const AGENT_EVERY = 6 // ทำงานทุก 6 ชั่วโมง
+export const HIRE: Record<AgentKind, { name: string; icon: string; cost: number; does: string }> = {
+  ghost: { name: 'ผี', icon: '👻', cost: 45, does: 'เดินหลอกคนที่ใจนิ่งที่สุดในวงของมัน' },
+  shaman: { name: 'หมอผี', icon: '🔮', cost: 55, does: 'ปัดเป่าคนที่กลัวหนัก ถ้าไม่มีลูกค้าก็ปั่นข่าวเอง' },
+  police: { name: 'ตำรวจ', icon: '🚨', cost: 65, does: 'ปิดข่าวลือในวง ถ้าไม่มีก็ลาดตระเวนให้ใจนิ่ง' },
+}
 export const HOUSE_CAP = 3
 
 export type AvatarId = 'pootah' | 'ghost' | 'shaman' | 'police'
@@ -43,6 +55,9 @@ export type World = {
   nextHouse: number
   pos: { x: number; y: number } // ที่ที่ avatar ยืนอยู่บนกระดาน
   shared?: boolean // โลกร่วม: ศรัทธาเป็นของแต่ละคน replay จัดการเอง step ไม่ต้องบวกให้
+  agents: Agent[]
+  nextAgent: number
+  quiet?: boolean // ระหว่างตัวที่จ้างทำงาน: เก็บเฉพาะเรื่องสำคัญ ไม่งั้น log ท่วมทุก 6 ชั่วโมง
   tick: number // 1 tick = 1 ชั่วโมงในเมือง
   faith: number
   nextId: number
@@ -171,6 +186,8 @@ export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'poot
     haunt: {},
     houses,
     nextHouse: houses.length,
+    agents: [],
+    nextAgent: 0,
     pos: { x: ZONE_POS['ศาลปู่ตา'][0], y: ZONE_POS['ศาลปู่ตา'][1] },
     tick: 0,
     faith: 30,
@@ -207,6 +224,7 @@ const day = (w: World) => Math.floor(w.tick / 24) + 1
 const byId = (w: World, id: number) => w.citizens.find((c) => c.id === id)
 
 function push(w: World, text: string, notable = false) {
+  if (w.quiet && !notable) return
   w.log.unshift({ t: w.tick, text: `วันที่ ${day(w)} — ${text}`, notable })
   if (w.log.length > 300) w.log.length = 300
 }
@@ -409,6 +427,35 @@ function lifeCycle(w: World, r: () => number) {
     push(w, `เมืองกลัวมานานเกินไป ไม่มีใครคิดจะแต่งงาน ไม่มีใครย้ายเข้ามา`, true)
 }
 
+// AI ของตัวละครที่จ้างมา — ใช้พลังชุดเดียวกับที่ผู้เล่นใช้ แต่ตัดสินใจเอง
+// ทุกอย่างต้อง deterministic (ดูกฎเหล็กใน context.md)
+function agentTurn(w: World, a: Agent, r: () => number) {
+  const keep = w.pos
+  w.pos = { x: a.x, y: a.y }
+  w.quiet = true
+  const near = reach(w)
+  const powers = AVATARS.find((v) => v.id === a.kind)!.powers
+  const act = (key: string, c?: Citizen, z?: Zone) => powers.find((x) => x.key === key)!.run(w, r, c, z)
+
+  if (a.kind === 'ghost') {
+    const calm = near.filter((c) => !c.spirit).sort((x, y) => x.fear - y.fear)[0]
+    if (calm) act('scare', calm)
+  } else if (a.kind === 'shaman') {
+    const client = near.filter((c) => c.fear > 50).sort((x, y) => y.fear - x.fear)[0]
+    if (client) act('cleanse', client)
+    else if (near.length) act('lie', undefined, near[0].zone)
+  } else {
+    const noisy = w.runs.find((run) => {
+      const t = byId(w, run.who)
+      return t && citizenInRange(w, t)
+    })
+    if (noisy) act('hush')
+    else if (near.length) act('patrol', undefined, near[0].zone)
+  }
+  w.pos = keep
+  w.quiet = false
+}
+
 export function step(w: World) {
   const r = rng(w.seed + w.tick * 7919)
   w.tick++
@@ -466,6 +513,26 @@ export function step(w: World) {
       delete w.wards[z]
       push(w, `รอยปกปักที่${z}จางหายไปแล้ว`)
     }
+
+  // 6.5) ตัวละครที่จ้างมาทำงานของมันเอง
+  for (const a of [...w.agents]) {
+    if (w.tick >= a.until) {
+      w.agents = w.agents.filter((x) => x !== a)
+      push(w, `${HIRE[a.kind].icon} ${HIRE[a.kind].name}ที่จ้างไว้หมดสัญญาแล้ว เก็บของกลับ`, true)
+      continue
+    }
+    if (w.tick >= a.next) {
+      a.next = w.tick + AGENT_EVERY
+      agentTurn(w, a, rng(w.seed + w.tick * 6151 + a.id))
+    }
+  }
+
+  // 6.6) สรุปผลงานของตัวที่จ้างวันละครั้ง แทนการรายงานทุก 6 ชั่วโมง
+  if (w.tick % 24 === 0 && w.agents.length)
+    push(
+      w,
+      `คนที่จ้างไว้ยังทำงานอยู่: ${w.agents.map((a) => HIRE[a.kind].icon + HIRE[a.kind].name).join(' · ')}`,
+    )
 
   // 7) ศรัทธาที่ไม่ได้ใช้จางเอง — คนลืมเทพที่ไม่เคยแสดงตัว (กันศรัทธาบวมจนไม่ต้องตัดสินใจอะไร)
   if (w.tick % 24 === 0 && !w.shared) w.faith = Math.max(0, w.faith * 0.97)
@@ -641,14 +708,36 @@ export const AVATARS: {
   },
 ]
 
+// พลัง "จ้าง" ใช้ได้ทุกสาย — วางตรงจุดที่ผู้เล่นยืนอยู่
+export const HIRE_POWERS: Power[] = (Object.keys(HIRE) as AgentKind[]).map((kind) => ({
+  key: `hire_${kind}`,
+  name: `จ้าง${HIRE[kind].name}`,
+  cost: HIRE[kind].cost,
+  target: 'none' as const,
+  hint: `${HIRE[kind].does} · อยู่ ${AGENT_DAYS} วัน`,
+  run: (w: World) => {
+    w.agents.push({
+      id: w.nextAgent++,
+      kind,
+      by: 'me',
+      x: w.pos.x,
+      y: w.pos.y,
+      until: w.tick + AGENT_DAYS * 24,
+      next: w.tick + AGENT_EVERY,
+    })
+    push(w, `${HIRE[kind].icon} มี${HIRE[kind].name}มาปักหลักอยู่แถวนี้ ${AGENT_DAYS} วัน`, true)
+  },
+}))
+
 export const avatarOf = (w: World) => AVATARS.find((a) => a.id === w.avatar)!
+export const powersOf = (w: World) => [...HIRE_POWERS, ...avatarOf(w).powers]
 
 export function moveTo(w: World, x: number, y: number) {
   w.pos = { x: clamp(Math.round(x), 0, BOARD), y: clamp(Math.round(y), 0, BOARD) }
 }
 
 export function castPower(w: World, key: string, c?: Citizen, z?: Zone) {
-  const p = avatarOf(w).powers.find((x) => x.key === key)
+  const p = powersOf(w).find((x) => x.key === key)
   if (!p || w.faith < p.cost) return false
   if (p.target === 'citizen' && (!c || c.gone || !citizenInRange(w, c))) return false
   if (p.target === 'zone' && (!z || !inRange(w, ZONE_POS[z][0], ZONE_POS[z][1]))) return false
@@ -714,7 +803,7 @@ export function load(msPerTick: number): World | null {
   } catch {
     return null
   }
-  if (!w.runs || typeof w.nextId !== 'number' || !w.avatar || !w.houses) return null // save รุ่นเก่า ทิ้งได้
+  if (!w.runs || typeof w.nextId !== 'number' || !w.avatar || !w.houses || !w.agents) return null // save รุ่นเก่า ทิ้งได้
   const missed = Math.min(Math.floor((Date.now() - w.savedAt) / msPerTick), MAX_CATCHUP_TICKS)
   for (let i = 0; i < missed; i++) step(w)
   if (missed > 2) push(w, `— ปู่ตาไม่ได้มองมา ${Math.max(1, Math.floor(missed / 24))} วัน เมืองเดินของมันเอง —`, true)
@@ -808,6 +897,30 @@ export function selfCheck() {
     alive(hh).every((c) => !!houseOf(hh, c.id)),
     'คนที่ยังอยู่ต้องมีบ้านทุกคน',
   )
+
+  const ag = createWorld(21, 'pootah')
+  ag.faith = 300
+  const victim = ag.citizens.find((c) => citizenInRange(ag, c) && !c.spirit)!
+  const f1 = victim.fear
+  console.assert(castPower(ag, 'hire_ghost'), 'จ้างผีต้องได้ถ้าศรัทธาพอ')
+  console.assert(ag.agents.length === 1 && ag.faith === 255, 'จ้างแล้วต้องมีตัวลงเมืองและหักศรัทธา 45')
+  for (let i = 0; i < 24 * 2; i++) step(ag)
+  console.assert(
+    cityFear(ag) > 20 || victim.fear > f1,
+    'ผีที่จ้างมาต้องทำงานเองโดยผู้เล่นไม่ต้องกดอะไรอีก',
+  )
+  for (let i = 0; i < 24 * (AGENT_DAYS + 1); i++) step(ag)
+  console.assert(ag.agents.length === 0, 'หมดสัญญาแล้วต้องหายไปเอง')
+
+  const d1 = createWorld(22, 'pootah')
+  const d2 = createWorld(22, 'pootah')
+  for (const g of [d1, d2]) {
+    g.faith = 300
+    castPower(g, 'hire_shaman')
+    castPower(g, 'hire_police')
+    for (let i = 0; i < 24 * 6; i++) step(g)
+  }
+  console.assert(JSON.stringify(d1) === JSON.stringify(d2), 'ตัวละครที่จ้างมาต้องตัดสินใจแบบ deterministic')
 
   console.assert(!seasonOver(createWorld(1)), 'ฤดูเพิ่งเริ่มต้องยังไม่จบ')
 

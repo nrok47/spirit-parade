@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import {
+  AGENT_RADIUS,
   AVATARS,
   BOARD,
+  HIRE,
   RADIUS,
   SEASON_DAYS,
   ZONES,
@@ -17,6 +19,7 @@ import {
   inRange,
   load,
   moveTo,
+  powersOf,
   runToNotable,
   save,
   seasonOver,
@@ -360,7 +363,7 @@ export default function App() {
       )}
 
       <div className="powers">
-        {me_.powers.map((p) => (
+        {powersOf(view).map((p) => (
           <button
             key={p.key}
             title={p.hint}
@@ -385,7 +388,7 @@ export default function App() {
         <span className="hint">
           {aim
             ? `เลือก${aim.target === 'zone' ? 'ย่าน' : 'คน'}ในวง เพื่อ${aim.name}`
-            : 'คลิกกระดานเพื่อย้ายไปยืนที่นั่น — พรทำงานเฉพาะในวง'}
+            : 'คลิกกระดานเพื่อย้ายไปยืนที่นั่น แล้วจ้างคนลงตรงนั้น — เขาจะทำงานของเขาเอง'}
         </span>
       </div>
 
@@ -460,6 +463,17 @@ export default function App() {
               </g>
             )
           })}
+
+          {view.agents.map((a) => (
+            <g key={a.id} className={`agent ${a.kind}`}>
+              <circle cx={a.x} cy={a.y} r={AGENT_RADIUS} className="arange" />
+              <circle cx={a.x} cy={a.y} r="2.8" />
+              <text x={a.x} y={a.y + 1.4}>
+                {HIRE[a.kind].icon}
+                <title>{`${HIRE[a.kind].name} · เหลืออีก ${Math.max(0, Math.ceil((a.until - view.tick) / 24))} วัน`}</title>
+              </text>
+            </g>
+          ))}
 
           <g className="avatar" transform={`translate(${view.pos.x} ${view.pos.y})`}>
             <circle r="3.4" />

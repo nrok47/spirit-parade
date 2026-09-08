@@ -112,6 +112,8 @@ export function replay(
         a.target_citizen === null ? undefined : w.citizens.find((c) => c.id === a.target_citizen),
         (a.target_zone as Zone) ?? undefined,
       )
+      // ตัวที่จ้างในโลกร่วมต้องรู้ว่าใครจ้าง
+      if (a.power.startsWith('hire_') && w.agents.length) w.agents[w.agents.length - 1].by = a.player
       purse[a.player] = w.faith
       w.avatar = keep.avatar
       w.faith = keep.faith
