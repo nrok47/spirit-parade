@@ -45,15 +45,16 @@ export function now() {
 
 export const seasonSeed = (season: number) => (season * 7919 + 104729) % 100000
 
-/** ชื่อผู้เล่นเก็บในเครื่อง — ยังไม่มีระบบ login */
-export function me(): string {
-  let id = localStorage.getItem('sp-player')
-  if (!id) {
-    id = 'p' + Math.random().toString(36).slice(2, 8)
-    localStorage.setItem('sp-player', id)
-  }
-  return id
-}
+/**
+ * ตัวตนผู้เล่น = PIN ที่ตั้งเอง ไม่มีรหัสผ่าน ไม่มี server auth
+ * โลกไม่ได้ผูกกับ PIN เลย — PIN บอกแค่ว่าศรัทธากระเป๋าใคร ตัวที่จ้างเป็นของใคร
+ * และแยก save เมืองส่วนตัวในเครื่อง · ใครรู้ PIN ก็เล่นเป็นคนนั้นได้ (ตั้งใจให้ง่าย)
+ */
+export const PIN_KEY = 'sp-pin'
+export const getPin = () => localStorage.getItem(PIN_KEY)
+export const setPin = (pin: string) => localStorage.setItem(PIN_KEY, pin)
+export const clearPin = () => localStorage.removeItem(PIN_KEY)
+export const me = (): string => getPin() ?? 'guest'
 
 const headers = { apikey: ANON, Authorization: `Bearer ${ANON}`, 'Content-Type': 'application/json' }
 

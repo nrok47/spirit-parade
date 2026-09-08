@@ -76,3 +76,9 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: st
 .board .agent.thief .arange { stroke: #b0894f; }
 .board .agent.monk .arange { stroke: #d6c27a; }
 .board .agent.vendor .arange { stroke: #7ad6a8; }
+
+.pinbox { display: flex; gap: 8px; margin: 8px 0 4px; }
+.pinbox input { font: inherit; font-size: 22px; letter-spacing: 6px; width: 150px; text-align: center; background: #241d19; color: inherit; border: 1px solid #3a2f28; border-radius: 6px; padding: 8px 10px; }
+.pinbox input:focus { outline: none; border-color: #a97c4a; }
+.lead.small { font-size: 12px; margin-top: 14px; }
+.pinchip { font-size: 12px; opacity: .7; border-radius: 20px; }

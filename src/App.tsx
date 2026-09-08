@@ -32,6 +32,8 @@ import {
 } from './sim'
 import {
   MS_PER_TICK,
+  clearPin,
+  getPin,
   avatarName,
   fetchActions,
   me,
@@ -39,6 +41,7 @@ import {
   now,
   replay,
   sendAction,
+  setPin,
   type Action,
 } from './net'
 
@@ -52,11 +55,44 @@ if (import.meta.env.DEV) {
 
 const fearColor = (f: number) => (f >= 70 ? '#e05b4a' : f >= 40 ? '#e0a13a' : '#5aa46a')
 
+function PinGate({ onEnter }: { onEnter: (pin: string) => void }) {
+  const [pin, setPin_] = useState('')
+  const ok = /^\d{3,6}$/.test(pin)
+  return (
+    <div className="app picker">
+      <h1>Spirit Parade</h1>
+      <p className="lead">ใส่เลขของตัวเองไว้จำเมือง — ตั้งเองได้ ไม่มีรหัสผ่าน</p>
+      <form
+        className="pinbox"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (ok) onEnter(pin)
+        }}
+      >
+        <input
+          autoFocus
+          inputMode="numeric"
+          placeholder="เช่น 123"
+          maxLength={6}
+          value={pin}
+          onChange={(e) => setPin_(e.target.value.replace(/\D/g, ''))}
+        />
+        <button disabled={!ok}>เข้าเมือง</button>
+      </form>
+      <p className="lead small">เลขเดิม = เมืองเดิมและศรัทธาเดิม · เลขใหม่ = เริ่มเมืองใหม่</p>
+    </div>
+  )
+}
+
 export default function App() {
+  const [pin, setPinState] = useState<string | null>(() => getPin())
   const [mode, setMode] = useState<'local' | 'shared'>(
     () => (localStorage.getItem('sp-mode') as 'local' | 'shared') ?? 'local',
   )
-  const [w, setW] = useState<World | null>(() => load(BASE_MS) ?? createWorld(Date.now() % 100000))
+  const [w, setW] = useState<World | null>(() => {
+    const p = getPin()
+    return p ? (load(BASE_MS, p) ?? createWorld(Date.now() % 100000)) : null
+  })
   const [speed, setSpeed] = useState(1)
   const [aim, setAim] = useState<Power | null>(null)
 
@@ -129,20 +165,32 @@ export default function App() {
   }, [speed, doneLocal, mode])
 
   useEffect(() => {
-    const id = setInterval(() => ref.current && save(ref.current), 5000)
-    const bye = () => ref.current && save(ref.current)
+    if (!pin) return
+    const id = setInterval(() => ref.current && save(ref.current, pin), 5000)
+    const bye = () => ref.current && save(ref.current, pin)
     window.addEventListener('beforeunload', bye)
     return () => {
       clearInterval(id)
       window.removeEventListener('beforeunload', bye)
     }
-  }, [])
+  }, [pin])
 
   const switchMode = (m: 'local' | 'shared') => {
     localStorage.setItem('sp-mode', m)
     setMode(m)
     setAim(null)
   }
+
+  if (!pin)
+    return (
+      <PinGate
+        onEnter={(v) => {
+          setPin(v)
+          setPinState(v)
+          setW(load(BASE_MS, v) ?? createWorld(Date.now() % 100000))
+        }}
+      />
+    )
 
   const view = mode === 'shared' ? shared : w
   if (!view)
@@ -295,6 +343,17 @@ export default function App() {
         <div className="me" title={me_.income}>
           {me_.icon} {me_.name}
         </div>
+        <button
+          className="pinchip"
+          title="เปลี่ยนเลขผู้เล่น"
+          onClick={() => {
+            if (w) save(w, pin)
+            clearPin()
+            setPinState(null)
+          }}
+        >
+          #{pin}
+        </button>
         <div className="speeds">
           <button className={mode === 'local' ? 'on' : ''} onClick={() => switchMode('local')} title="เมืองของตัวเอง">
             🏠

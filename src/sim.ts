@@ -782,16 +782,17 @@ function doOmen(w: World) {
 export const omen = (w: World) => castPower(w, 'omen')
 
 // --- save / offline progress ---
-const KEY = 'spirit-parade-save'
+// เมืองส่วนตัวแยกตาม PIN — คนละ PIN บนเครื่องเดียวกันคือคนละเมือง
+const keyFor = (slot: string) => `spirit-parade-save:${slot}`
 
-export function save(w: World) {
+export function save(w: World, slot: string) {
   w.savedAt = Date.now()
-  localStorage.setItem(KEY, JSON.stringify(w))
+  localStorage.setItem(keyFor(slot), JSON.stringify(w))
 }
 
 // คืน null เมื่อยังไม่เคยเล่น (หรือ save รุ่นเก่า) → ให้ UI ถามว่าจะเป็นใครก่อน
-export function load(msPerTick: number): World | null {
-  const raw = localStorage.getItem(KEY)
+export function load(msPerTick: number, slot: string): World | null {
+  const raw = localStorage.getItem(keyFor(slot))
   if (!raw) return null
   let w: World
   try {
@@ -953,6 +954,17 @@ export function selfCheck() {
 
   const legacy = { ...createWorld(41), avatar: 'shaman' as AvatarId }
   console.assert(!!avatarOf(legacy) && powersOf(legacy).length > 0, 'save เก่าที่เป็นสายอื่นต้องเปิดได้ ไม่พังทั้งจอ')
+
+  // PIN แยกเมืองในเครื่องเดียวกัน
+  const wA = createWorld(51)
+  wA.faith = 777
+  save(wA, '123')
+  const wB = createWorld(52)
+  wB.faith = 111
+  save(wB, '999')
+  console.assert(Math.round(load(2000, '123')!.faith) === 777, 'PIN เดิมต้องได้เมืองเดิม')
+  console.assert(Math.round(load(2000, '999')!.faith) === 111, 'คนละ PIN ต้องคนละเมือง')
+  console.assert(load(2000, 'ไม่เคยใช้') === null, 'PIN ใหม่ต้องได้เมืองใหม่')
 
   console.assert(!seasonOver(createWorld(1)), 'ฤดูเพิ่งเริ่มต้องยังไม่จบ')
 
