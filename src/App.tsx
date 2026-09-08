@@ -5,7 +5,6 @@ import {
   BOARD,
   HIRE,
   RADIUS,
-  SEASON_DAYS,
   ZONES,
   ZONE_POS,
   alive,
@@ -21,32 +20,35 @@ import {
   powersOf,
   runToNotable,
   save,
-  seasonOver,
   selfCheck,
   step,
-  type AvatarId,
   type Citizen,
   type Power,
   type World,
   type Zone,
 } from './sim'
 import {
+  APPLY_LAG,
   MS_PER_TICK,
+  SEASON,
+  advance,
   clearPin,
-  getPin,
-  avatarName,
+  createShared,
+  enqueue,
   fetchActions,
+  getPin,
   me,
   netSelfCheck,
-  now,
-  replay,
+  nowTick,
+  purseOf,
   sendAction,
   setPin,
   type Action,
+  type Shared,
 } from './net'
 
 const SPEEDS = [0, 1, 4]
-const BASE_MS = MS_PER_TICK // 1 ชั่วโมงในเมือง = 2 วินาทีจริง
+const BASE_MS = 2000 // เมืองส่วนตัว: 1 ชั่วโมงในเมือง = 2 วินาทีจริง (เมืองร่วมใช้ MS_PER_TICK ซึ่งช้ากว่า)
 
 if (import.meta.env.DEV) {
   selfCheck()
@@ -97,72 +99,77 @@ export default function App() {
   const [aim, setAim] = useState<Power | null>(null)
 
   // --- โลกร่วม ---
-  const [acts, setActs] = useState<Action[]>([])
   const [shared, setShared] = useState<World | null>(null)
-  const [players, setPlayers] = useState<Record<string, AvatarId>>({})
   const [netErr, setNetErr] = useState<string | null>(null)
+  const [players, setPlayers] = useState<string[]>([])
+  const [myFaith, setMyFaith] = useState(0)
+  const sh = useRef<Shared | null>(null) // โลกร่วมเดินต่อในนี้ ไม่สร้างใหม่ทุก tick
+  const lastId = useRef(0)
   const [myPos, setMyPos] = useState({ x: ZONE_POS['ศาลปู่ตา'][0], y: ZONE_POS['ศาลปู่ตา'][1] })
 
   const ref = useRef(w)
   useEffect(() => {
     ref.current = w
   })
-  const actsRef = useRef(acts)
   const posRef = useRef(myPos)
   useEffect(() => {
-    actsRef.current = acts
     posRef.current = myPos
-  }, [acts, myPos])
+  }, [myPos])
 
-  const rebuild = useCallback(
-    (list: Action[]) => {
-      const { season, tick } = now()
-      const s = replay(season, tick, list, me(), 'pootah')
-      s.world.pos = posRef.current
-      setShared(s.world)
-      setPlayers(s.avatars)
-    },
-    [],
-  )
+  // เดินโลกร่วมไปจนถึงเวลาจริง แล้วเอาผลมาแสดง (ไม่สร้างโลกใหม่ทั้งใบ)
+  const tickShared = useCallback(() => {
+    const s = sh.current
+    if (!s) return
+    advance(s, nowTick())
+    s.world.pos = posRef.current
+    setShared({ ...s.world })
+    setPlayers(Object.keys(s.joined))
+    setMyFaith(purseOf(s, me()))
+  }, [])
 
-  // โลกร่วม: ดึงรายการที่คนอื่นใส่ทุก 8 วินาที แล้วเดินเวลาเองทุก tick
+  // โลกร่วม: ดึงเฉพาะของใหม่ทุก 8 วินาที · เดินเวลาเองทุก tick
   useEffect(() => {
     if (mode !== 'shared') return
     let dead = false
+    if (!sh.current) {
+      sh.current = createShared()
+      lastId.current = 0
+    }
     const pull = async () => {
       try {
-        const list = await fetchActions(now().season)
-        if (dead) return
+        const list = await fetchActions(lastId.current)
+        if (dead || !sh.current) return
         setNetErr(null)
-        setActs(list)
-        rebuild(list)
+        if (list.length) {
+          lastId.current = Math.max(lastId.current, ...list.map((a) => (a as Action & { id: number }).id ?? 0))
+          enqueue(sh.current, list)
+        }
+        tickShared()
       } catch (e) {
         if (!dead) setNetErr((e as Error).message)
       }
     }
     pull()
     const p = setInterval(pull, 8000)
-    const t = setInterval(() => rebuild(actsRef.current), BASE_MS)
+    const t = setInterval(tickShared, MS_PER_TICK)
     return () => {
       dead = true
       clearInterval(p)
       clearInterval(t)
     }
-  }, [mode, rebuild])
-
-  const doneLocal = mode === 'local' && !!w && seasonOver(w)
+  }, [mode, tickShared])
 
   useEffect(() => {
-    if (mode !== 'local' || !SPEEDS[speed] || doneLocal) return
+    if (mode !== 'local' || !SPEEDS[speed]) return
     const id = setInterval(() => {
       const cur = ref.current
-      if (!cur || seasonOver(cur)) return
+      if (!cur) return
       const next = { ...cur }
       step(next)
       setW(next)
     }, BASE_MS / SPEEDS[speed])
     return () => clearInterval(id)
-  }, [speed, doneLocal, mode])
+  }, [speed, mode])
 
   useEffect(() => {
     if (!pin) return
@@ -207,7 +214,7 @@ export default function App() {
   const me_ = avatarOf(view)
   const people = alive(view)
   const fear = cityFear(view)
-  const faith = Math.floor(view.faith)
+  const faith = Math.floor(mode === 'shared' ? myFaith : view.faith)
   const dayNo = Math.floor(view.tick / 24) + 1
 
   const fire = (p: Power, c?: Citizen, z?: Zone) => {
@@ -224,10 +231,9 @@ export default function App() {
       setAim(null)
       return
     }
-    const { season, tick } = now()
     const a: Action = {
-      season,
-      tick,
+      season: SEASON,
+      tick: nowTick(),
       player: me(),
       avatar: 'pootah',
       power: p.key,
@@ -236,69 +242,13 @@ export default function App() {
       px: myPos.x,
       py: myPos.y,
     }
-    const list = [...acts, a]
-    setActs(list)
-    rebuild(list)
     setAim(null)
+    // ของตัวเองก็เข้าคิวเหมือนของคนอื่น จะได้เห็นผลตอนเดียวกับที่เครื่องอื่นเห็น
+    if (sh.current) enqueue(sh.current, [a])
     sendAction(a).catch((e) => setNetErr((e as Error).message))
   }
 
   const tapPower = (p: Power) => (p.target === 'none' ? fire(p) : setAim(aim?.key === p.key ? null : p))
-
-  if (doneLocal && w) {
-    const born = w.citizens.filter((c) => c.bornHere).length
-    const left = w.citizens.filter((c) => c.gone).length
-    return (
-      <div className="app">
-        <h1>จบฤดูที่ {w.season}</h1>
-        <p className="lead">
-          {me_.icon} {me_.name} · {SEASON_DAYS} วันผ่านไป
-        </p>
-        <div className="summary">
-          <div className="stat big">
-            <span>ประชากร</span>
-            <b>{people.length}</b>
-          </div>
-          <div className="stat big">
-            <span>ความกลัวเฉลี่ย</span>
-            <b style={{ color: fearColor(fear) }}>{fear}</b>
-          </div>
-          <div className="stat">
-            <span>ศรัทธาที่เหลือ</span>
-            <b>{faith}</b>
-          </div>
-          <div className="stat">
-            <span>หลังคาเรือน</span>
-            <b>{w.houses.length}</b>
-          </div>
-          <div className="stat">
-            <span>เกิดในเมือง</span>
-            <b>{born}</b>
-          </div>
-          <div className="stat">
-            <span>หายไป</span>
-            <b>{left}</b>
-          </div>
-        </div>
-        <h3>เรื่องของฤดูนี้</h3>
-        <ol className="log">
-          {w.log
-            .filter((l) => l.notable)
-            .slice(0, 12)
-            .map((l, i) => (
-              <li key={`${l.t}-${i}`} className="notable">
-                {l.text}
-              </li>
-            ))}
-        </ol>
-        <div className="powers">
-          <button onClick={() => setW(createWorld((w.seed * 31 + 7) % 100000, 'pootah', w.season + 1))}>
-            เริ่มฤดูที่ {w.season + 1}
-          </button>
-        </div>
-      </div>
-    )
-  }
 
   const onBoard = (e: React.MouseEvent<SVGSVGElement>) => {
     if (aim) return
@@ -317,7 +267,7 @@ export default function App() {
     setW(next)
   }
 
-  const others = Object.entries(players).filter(([id]) => id !== me())
+  const others = players.filter((id) => id !== me())
 
   return (
     <div className="app">
@@ -335,11 +285,8 @@ export default function App() {
           <b>{faith}</b>
         </div>
         <div className="stat">
-          <span>ฤดู {view.season} · วันที่</span>
-          <b>
-            {dayNo}
-            <small>/{SEASON_DAYS}</small>
-          </b>
+          <span>วันที่</span>
+          <b>{dayNo}</b>
         </div>
         <div className="me" title={me_.income}>
           {me_.icon} {me_.name}
@@ -377,8 +324,8 @@ export default function App() {
             <span className="err">⚠ {netErr}</span>
           ) : (
             <span>
-              เมืองร่วม · เวลาเดินตามจริง · คนอื่นในเมืองนี้{' '}
-              {others.length ? others.map(([id, av]) => `${id} (${avatarName(av)})`).join(' · ') : 'ยังไม่มีใคร'}
+              เมืองร่วม · เวลาเดินตามจริง ไม่มีวันจบ · ของที่กดจะเข้าเมืองใน {(APPLY_LAG * MS_PER_TICK) / 1000} วินาที · คนอื่นในเมืองนี้{' '}
+              {others.length ? others.join(' · ') : 'ยังไม่มีใคร'}
             </span>
           )}
         </div>

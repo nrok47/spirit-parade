@@ -47,7 +47,6 @@ export type AvatarId = 'pootah'
 export type World = {
   seed: number
   avatar: AvatarId
-  season: number
   haunt: Record<number, number> // citizen id -> tick ที่การตามติดหมดฤทธิ์
   houses: House[]
   nextHouse: number
@@ -71,7 +70,6 @@ const MAX_CATCHUP_TICKS = 24 * 3
 const LEAVE_FEAR = 85
 const GROW_FEAR = 55 // เมืองกลัวเกินนี้ = ไม่มีใครแต่งงาน/มีลูก/ย้ายเข้า
 const EVENT_COOLDOWN = 8 // ชั่วโมง
-export const SEASON_DAYS = 30
 export const BOARD = 100
 export const RADIUS = 26 // พรทำงานเฉพาะในวงรอบตัว — นอกวงเอื้อมไม่ถึง
 
@@ -99,7 +97,6 @@ export const citizenInRange = (w: World, c: Citizen) => {
 // คนที่พรเอื้อมถึงจริง
 export const reach = (w: World, zone?: Zone) =>
   alive(w).filter((c) => citizenInRange(w, c) && (!zone || c.zone === zone))
-export const seasonOver = (w: World) => w.tick >= SEASON_DAYS * 24
 
 function rng(seed: number) {
   let s = seed >>> 0
@@ -145,7 +142,7 @@ const FEMALE = ['น้ำ', 'อ้อย', 'ก้อย', 'ดาว', 'ฝ�
 const JOBS = ['ไรเดอร์', 'แม่ค้า', 'พ่อค้า', 'รปภ.', 'คนงานศาล', 'คนเดินระบบ']
 
 // ⚠️ seed มาจากข้างนอกเสมอ — ในโลกร่วมคือ seed ของฤดู ไม่ใช่ Date.now()
-export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'pootah', season = 1): World {
+export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'pootah'): World {
   const citizens: Citizen[] = ROSTER.map(([name, spirit, sex, job, zone, trait, age], id) => ({
     id,
     name,
@@ -182,7 +179,6 @@ export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'poot
   return {
     seed,
     avatar,
-    season,
     haunt: {},
     houses,
     nextHouse: houses.length,
@@ -996,8 +992,6 @@ export function selfCheck() {
   console.assert(Math.round(load(2000, '123')!.faith) === 777, 'PIN เดิมต้องได้เมืองเดิม')
   console.assert(Math.round(load(2000, '999')!.faith) === 111, 'คนละ PIN ต้องคนละเมือง')
   console.assert(load(2000, 'ไม่เคยใช้') === null, 'PIN ใหม่ต้องได้เมืองใหม่')
-
-  console.assert(!seasonOver(createWorld(1)), 'ฤดูเพิ่งเริ่มต้องยังไม่จบ')
 
   console.log('sim selfCheck ผ่าน')
 }
