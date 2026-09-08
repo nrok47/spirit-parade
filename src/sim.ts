@@ -14,6 +14,7 @@ export type Citizen = {
   id: number
   name: string
   spirit: boolean
+  sex: 'ช' | 'ญ'
   job: string
   zone: Zone
   trait: Trait
@@ -32,16 +33,11 @@ export type ChainRun = { chain: number; step: number; who: number; at: number }
 export type House = { id: number; x: number; y: number; zone: Zone; members: number[] }
 
 // ตัวละครที่จ้างลงไปในเมือง แล้วมันทำงานของมันเอง — ผู้เล่นตัดสินใจแค่ จ้างใคร วางตรงไหน
-export type AgentKind = 'ghost' | 'shaman' | 'police'
+export type AgentKind = 'ghost' | 'shaman' | 'police' | 'thief' | 'monk' | 'vendor'
 export type Agent = { id: number; kind: AgentKind; by: string; x: number; y: number; until: number; next: number }
 export const AGENT_RADIUS = 18
 export const AGENT_DAYS = 5
 export const AGENT_EVERY = 6 // ทำงานทุก 6 ชั่วโมง
-export const HIRE: Record<AgentKind, { name: string; icon: string; cost: number; does: string }> = {
-  ghost: { name: 'ผี', icon: '👻', cost: 45, does: 'เดินหลอกคนที่ใจนิ่งที่สุดในวงของมัน' },
-  shaman: { name: 'หมอผี', icon: '🔮', cost: 55, does: 'ปัดเป่าคนที่กลัวหนัก ถ้าไม่มีลูกค้าก็ปั่นข่าวเอง' },
-  police: { name: 'ตำรวจ', icon: '🚨', cost: 65, does: 'ปิดข่าวลือในวง ถ้าไม่มีก็ลาดตระเวนให้ใจนิ่ง' },
-}
 export const HOUSE_CAP = 3
 
 export type AvatarId = 'pootah' | 'ghost' | 'shaman' | 'police'
@@ -127,30 +123,32 @@ const FEAR_MULT: Record<Trait, number> = {
   ติดบ้าน: 0.9,
 }
 
-const ROSTER: [string, boolean, string, Zone, Trait, number][] = [
-  ['เก่ง', false, 'ไรเดอร์', 'ซอยใน', 'ใจถึง', 27],
-  ['ริน', false, 'คนเดินระบบ', 'โกดัง', 'ติดบ้าน', 25],
-  ['ท่านขุน', true, 'ผีเฝ้าด่าน', 'ศาลปู่ตา', 'ใจถึง', 60],
-  ['ป้าส้มตำ', false, 'แม่ค้า', 'ตลาด', 'ปากมาก', 52],
-  ['หลวงพ่อ', false, 'คนงานศาล', 'ศาลปู่ตา', 'ขี้สงสาร', 66],
-  ['ยายคำ', false, 'แม่ค้า', 'ตลาด', 'ขี้กลัว', 58],
-  ['นางตานี', true, 'ผีตานี', 'ซอยใน', 'ขี้สงสาร', 40],
-  ['เสี่ยหมง', false, 'พ่อค้า', 'โกดัง', 'ติดบ้าน', 44],
-  ['บักหำ', false, 'รปภ.', 'ใต้สะพาน', 'ใจถึง', 31],
-  ['แม่ย่านาง', true, 'แม่ย่านาง', 'ท่าน้ำ', 'ขี้สงสาร', 70],
-  ['ตุ๊กตา', false, 'สแกมเมอร์', 'ใต้สะพาน', 'ปากมาก', 23],
-  ['ลุงมา', false, 'คนงานศาล', 'ศาลปู่ตา', 'ขี้กลัว', 49],
+const ROSTER: [string, boolean, 'ช' | 'ญ', string, Zone, Trait, number][] = [
+  ['เก่ง', false, 'ช', 'ไรเดอร์', 'ซอยใน', 'ใจถึง', 27],
+  ['ริน', false, 'ญ', 'คนเดินระบบ', 'โกดัง', 'ติดบ้าน', 25],
+  ['ท่านขุน', true, 'ช', 'ผีเฝ้าด่าน', 'ศาลปู่ตา', 'ใจถึง', 60],
+  ['ป้าส้มตำ', false, 'ญ', 'แม่ค้า', 'ตลาด', 'ปากมาก', 52],
+  ['หลวงพ่อ', false, 'ช', 'คนงานศาล', 'ศาลปู่ตา', 'ขี้สงสาร', 66],
+  ['ยายคำ', false, 'ญ', 'แม่ค้า', 'ตลาด', 'ขี้กลัว', 58],
+  ['นางตานี', true, 'ญ', 'ผีตานี', 'ซอยใน', 'ขี้สงสาร', 40],
+  ['เสี่ยหมง', false, 'ช', 'พ่อค้า', 'โกดัง', 'ติดบ้าน', 44],
+  ['บักหำ', false, 'ช', 'รปภ.', 'ใต้สะพาน', 'ใจถึง', 31],
+  ['แม่ย่านาง', true, 'ญ', 'แม่ย่านาง', 'ท่าน้ำ', 'ขี้สงสาร', 70],
+  ['ตุ๊กตา', false, 'ญ', 'สแกมเมอร์', 'ใต้สะพาน', 'ปากมาก', 23],
+  ['ลุงมา', false, 'ช', 'คนงานศาล', 'ศาลปู่ตา', 'ขี้กลัว', 49],
 ]
 
-const NEW_NAMES = ['น้ำ', 'บุญ', 'ต้อย', 'แดง', 'อ้อย', 'หนู', 'ก้อย', 'เปิ้ล', 'ตี๋', 'ดาว', 'ฝน', 'พลอย']
+const MALE = ['บุญ', 'ต้อย', 'ตี๋', 'ชัย', 'หมู', 'เอก', 'ตูน', 'โจ้']
+const FEMALE = ['น้ำ', 'อ้อย', 'ก้อย', 'ดาว', 'ฝน', 'พลอย', 'แดง', 'เปิ้ล']
 const JOBS = ['ไรเดอร์', 'แม่ค้า', 'พ่อค้า', 'รปภ.', 'คนงานศาล', 'คนเดินระบบ']
 
 // ⚠️ seed มาจากข้างนอกเสมอ — ในโลกร่วมคือ seed ของฤดู ไม่ใช่ Date.now()
 export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'pootah', season = 1): World {
-  const citizens: Citizen[] = ROSTER.map(([name, spirit, job, zone, trait, age], id) => ({
+  const citizens: Citizen[] = ROSTER.map(([name, spirit, sex, job, zone, trait, age], id) => ({
     id,
     name,
     spirit,
+    sex,
     job,
     zone,
     trait: TRAITS.includes(trait) ? trait : 'ติดบ้าน',
@@ -326,11 +324,20 @@ function leaveHouse(w: World, id: number) {
   h.members = h.members.filter((m) => m !== id)
   if (!h.members.length) w.houses = w.houses.filter((x) => x !== h)
 }
-function newCitizen(w: World, name: string, zone: Zone, trait: Trait, age: number, bornHere: boolean): Citizen {
+function newCitizen(
+  w: World,
+  name: string,
+  sex: 'ช' | 'ญ',
+  zone: Zone,
+  trait: Trait,
+  age: number,
+  bornHere: boolean,
+): Citizen {
   return {
     id: w.nextId++,
     name,
     spirit: false,
+    sex,
     job: bornHere ? 'เด็ก' : JOBS[w.nextId % JOBS.length],
     zone,
     trait,
@@ -354,7 +361,10 @@ function lifeCycle(w: World, r: () => number) {
     const single = people.filter((c) => !c.partner && c.age >= 20 && c.age < 60 && c.fear < 45)
     if (single.length >= 2) {
       const a = pick(r, single)
-      const b = pick(r, single.filter((c) => c.id !== a.id && (c.zone === a.zone || a.ties.includes(c.id))))
+      const b = pick(
+        r,
+        single.filter((c) => c.id !== a.id && c.sex !== a.sex && (c.zone === a.zone || a.ties.includes(c.id))),
+      )
       if (b) {
         a.partner = b.id
         b.partner = a.id
@@ -384,7 +394,8 @@ function lifeCycle(w: World, r: () => number) {
     })
     const other = parent && byId(w, parent.partner!)
     if (parent && other && !other.gone) {
-      const kid = newCitizen(w, pick(r, NEW_NAMES), parent.zone, pick(r, [...TRAITS]), 0, true)
+      const boy = r() < 0.5
+      const kid = newCitizen(w, pick(r, boy ? MALE : FEMALE), boy ? 'ช' : 'ญ', parent.zone, pick(r, [...TRAITS]), 0, true)
       kid.ties = [parent.id, other.id]
       parent.ties.push(kid.id)
       other.ties.push(kid.id)
@@ -396,7 +407,16 @@ function lifeCycle(w: World, r: () => number) {
 
   // ย้ายเข้า — เมืองที่ไม่น่ากลัวเกินไปเท่านั้นที่มีคนอยากมาอยู่
   if (!stalled && people.length < 24 && r() < 0.1) {
-    const c = newCitizen(w, pick(r, NEW_NAMES), pick(r, [...ZONES]), pick(r, [...TRAITS]), 20 + Math.floor(r() * 25), false)
+    const boy = r() < 0.5
+    const c = newCitizen(
+      w,
+      pick(r, boy ? MALE : FEMALE),
+      boy ? 'ช' : 'ญ',
+      pick(r, [...ZONES]),
+      pick(r, [...TRAITS]),
+      20 + Math.floor(r() * 25),
+      false,
+    )
     const host = pick(r, people)
     c.ties = host ? [host.id] : []
     w.citizens.push(c)
@@ -427,31 +447,91 @@ function lifeCycle(w: World, r: () => number) {
     push(w, `เมืองกลัวมานานเกินไป ไม่มีใครคิดจะแต่งงาน ไม่มีใครย้ายเข้ามา`, true)
 }
 
-// AI ของตัวละครที่จ้างมา — ใช้พลังชุดเดียวกับที่ผู้เล่นใช้ แต่ตัดสินใจเอง
-// ทุกอย่างต้อง deterministic (ดูกฎเหล็กใน context.md)
+// คนที่จ้างลงเมืองได้ + AI ของแต่ละคน — ตัดสินใจเองทุก AGENT_EVERY ชั่วโมง
+// ทุกอย่างต้อง deterministic (ดูกฎเหล็กใน context.md) · near = คนที่อยู่ในวงของมัน
+export const HIRE: Record<
+  AgentKind,
+  { name: string; icon: string; cost: number; does: string; act: (w: World, r: () => number, near: Citizen[]) => void }
+> = {
+  ghost: {
+    name: 'ผี',
+    icon: '👻',
+    cost: 45,
+    does: 'เดินหลอกคนที่ใจนิ่งที่สุดในวง',
+    act: (_w, _r, near) => {
+      const calm = near.filter((c) => !c.spirit).sort((x, y) => x.fear - y.fear)[0]
+      if (calm) scare(calm, 18)
+    },
+  },
+  shaman: {
+    name: 'หมอผี',
+    icon: '🔮',
+    cost: 55,
+    does: 'ปัดเป่าคนที่กลัวหนัก ถ้าไม่มีลูกค้าก็ปั่นข่าวเอง',
+    act: (w, _r, near) => {
+      const client = near.filter((c) => c.fear > 50).sort((x, y) => y.fear - x.fear)[0]
+      if (client) {
+        client.fear = clamp(client.fear - 25)
+        push(w, `[หมอผี] ${client.name} จ่ายค่าครูแล้วนอนหลับได้เป็นคืนแรก`, true)
+      } else for (const c of near) scare(c, 9)
+    },
+  },
+  police: {
+    name: 'ตำรวจ',
+    icon: '🚨',
+    cost: 65,
+    does: 'ปิดข่าวลือในวง ถ้าไม่มีก็ลาดตระเวนให้ใจนิ่ง',
+    act: (w, _r, near) => {
+      const noisy = w.runs.find((run) => {
+        const t = byId(w, run.who)
+        return t && citizenInRange(w, t)
+      })
+      if (noisy) {
+        w.runs = w.runs.filter((x) => x !== noisy)
+        push(w, `[ตำรวจ] เรื่องที่กำลังลามถูกสั่งไม่ให้พูดถึงอีก`, true)
+      } else for (const c of near) scare(c, -8)
+    },
+  },
+  thief: {
+    name: 'ขโมย',
+    icon: '🥷',
+    cost: 35,
+    does: 'ย่องเข้าบ้านในวง เจ้าของผวา เพื่อนบ้านพลอยไม่กล้านอน',
+    act: (w, r, near) => {
+      const target = near.filter((c) => !c.spirit)[Math.floor(r() * Math.max(1, near.length))]
+      if (!target) return
+      scare(target, 16)
+      for (const c of near) if (c.id !== target.id) scare(c, 4)
+      push(w, `[ขโมย] บ้าน${target.name}ถูกงัดตอนดึก ของหายไปหลายอย่าง`, true)
+    },
+  },
+  monk: {
+    name: 'พระ',
+    icon: '🧎',
+    cost: 60,
+    does: 'สวดทั้งวงให้ใจนิ่ง คนแก่ในวงอยู่ได้นานขึ้น',
+    act: (w, _r, near) => {
+      for (const c of near) scare(c, -7)
+      if (near.length) push(w, `[พระ] เสียงสวดดังทั้งคืน คนแถวนั้นหลับสบายขึ้น`)
+    },
+  },
+  vendor: {
+    name: 'แม่ค้า',
+    icon: '🍜',
+    cost: 30,
+    does: 'ตั้งแผงขายของ คนออกมาเดิน ย่านนั้นคึกคัก',
+    act: (w, _r, near) => {
+      for (const c of near) scare(c, -4)
+      if (near.length > 2) push(w, `[แม่ค้า] แผงขายดี คนออกมานั่งกินกันจนดึก`)
+    },
+  },
+}
+
 function agentTurn(w: World, a: Agent, r: () => number) {
   const keep = w.pos
   w.pos = { x: a.x, y: a.y }
   w.quiet = true
-  const near = reach(w)
-  const powers = AVATARS.find((v) => v.id === a.kind)!.powers
-  const act = (key: string, c?: Citizen, z?: Zone) => powers.find((x) => x.key === key)!.run(w, r, c, z)
-
-  if (a.kind === 'ghost') {
-    const calm = near.filter((c) => !c.spirit).sort((x, y) => x.fear - y.fear)[0]
-    if (calm) act('scare', calm)
-  } else if (a.kind === 'shaman') {
-    const client = near.filter((c) => c.fear > 50).sort((x, y) => y.fear - x.fear)[0]
-    if (client) act('cleanse', client)
-    else if (near.length) act('lie', undefined, near[0].zone)
-  } else {
-    const noisy = w.runs.find((run) => {
-      const t = byId(w, run.who)
-      return t && citizenInRange(w, t)
-    })
-    if (noisy) act('hush')
-    else if (near.length) act('patrol', undefined, near[0].zone)
-  }
+  HIRE[a.kind].act(w, r, reach(w))
   w.pos = keep
   w.quiet = false
 }
@@ -709,6 +789,15 @@ export const AVATARS: {
 ]
 
 // พลัง "จ้าง" ใช้ได้ทุกสาย — วางตรงจุดที่ผู้เล่นยืนอยู่
+export const SETTLE_POWERS: Power[] = (['ช', 'ญ'] as const).map((sex) => ({
+  key: `settle_${sex === 'ช' ? 'm' : 'f'}`,
+  name: sex === 'ช' ? 'ชวนชายมาอยู่' : 'ชวนหญิงมาอยู่',
+  cost: 25,
+  target: 'none' as const,
+  hint: 'เพิ่มคนลงเมืองถาวร เขาจะใช้ชีวิตของเขาเอง แต่งงาน มีลูกได้',
+  run: (w: World) => settle(w, sex),
+}))
+
 export const HIRE_POWERS: Power[] = (Object.keys(HIRE) as AgentKind[]).map((kind) => ({
   key: `hire_${kind}`,
   name: `จ้าง${HIRE[kind].name}`,
@@ -729,8 +818,26 @@ export const HIRE_POWERS: Power[] = (Object.keys(HIRE) as AgentKind[]).map((kind
   },
 }))
 
+// ย้ายคนธรรมดาเข้ามาอยู่ — ไม่ใช่ agent ไม่มีวง แค่เพิ่มคนลงเมืองแล้วเขาใช้ชีวิตของเขาเอง
+function settle(w: World, sex: 'ช' | 'ญ') {
+  const r = rng(w.seed + w.tick * 911 + w.nextId)
+  const zone = ZONES.reduce((best, z) => {
+    const [x, y] = ZONE_POS[z]
+    const [bx, by] = ZONE_POS[best]
+    return Math.hypot(w.pos.x - x, w.pos.y - y) < Math.hypot(w.pos.x - bx, w.pos.y - by) ? z : best
+  }, ZONES[0])
+  const c = newCitizen(w, pick(r, sex === 'ช' ? MALE : FEMALE), sex, zone, pick(r, [...TRAITS]), 20 + Math.floor(r() * 20), false)
+  const host = alive(w)[0]
+  c.ties = host ? [host.id] : []
+  w.citizens.push(c)
+  const h = build(w, r, zone, c.id)
+  h.x = Math.round(clamp(w.pos.x, 6, BOARD - 6))
+  h.y = Math.round(clamp(w.pos.y, 6, BOARD - 6))
+  push(w, `${sex === 'ช' ? 'ชาย' : 'หญิง'}ชื่อ ${c.name} มาปลูกบ้านอยู่${zone} เป็น${c.job}`, true)
+}
+
 export const avatarOf = (w: World) => AVATARS.find((a) => a.id === w.avatar)!
-export const powersOf = (w: World) => [...HIRE_POWERS, ...avatarOf(w).powers]
+export const powersOf = (w: World) => [...SETTLE_POWERS, ...HIRE_POWERS, ...avatarOf(w).powers]
 
 export function moveTo(w: World, x: number, y: number) {
   w.pos = { x: clamp(Math.round(x), 0, BOARD), y: clamp(Math.round(y), 0, BOARD) }
@@ -921,6 +1028,43 @@ export function selfCheck() {
     for (let i = 0; i < 24 * 6; i++) step(g)
   }
   console.assert(JSON.stringify(d1) === JSON.stringify(d2), 'ตัวละครที่จ้างมาต้องตัดสินใจแบบ deterministic')
+
+  const st = createWorld(31, 'pootah')
+  st.faith = 200
+  const nStart = alive(st).length
+  console.assert(castPower(st, 'settle_f'), 'ชวนคนมาอยู่ต้องได้')
+  console.assert(
+    alive(st).length === nStart + 1 && st.houses.length === nStart + 1,
+    'ชวนคนมาอยู่ = เพิ่มคน + ปลูกบ้าน 1 หลัง',
+  )
+  console.assert(alive(st).some((c) => c.sex === 'ญ'), 'ชวนหญิงต้องได้หญิง')
+
+  const th = createWorld(32, 'pootah')
+  th.faith = 200
+  const fearBefore = cityFear(th)
+  castPower(th, 'hire_thief')
+  for (let i = 0; i < 24 * 2; i++) step(th)
+  console.assert(cityFear(th) > fearBefore, 'ขโมยต้องทำให้เมืองกลัวขึ้นเอง')
+
+  const mk = createWorld(32, 'pootah')
+  mk.citizens.forEach((c) => (c.fear = 60))
+  mk.faith = 200
+  const calmBefore = cityFear(mk)
+  castPower(mk, 'hire_monk')
+  for (let i = 0; i < 24 * 2; i++) step(mk)
+  console.assert(cityFear(mk) < calmBefore, 'พระต้องทำให้เมืองใจนิ่งขึ้นเอง')
+
+  const singles = createWorld(33)
+  console.assert(
+    singles.citizens.some((c) => c.sex === 'ช') && singles.citizens.some((c) => c.sex === 'ญ'),
+    'เมืองต้องมีทั้งชายและหญิงตั้งแต่ต้น',
+  )
+  const wed = createWorld(34)
+  for (let i = 0; i < 24 * 120; i++) step(wed)
+  console.assert(
+    wed.citizens.every((c) => c.partner === null || byId(wed, c.partner)!.sex !== c.sex),
+    'คู่ที่แต่งงานกันต้องต่างเพศ',
+  )
 
   console.assert(!seasonOver(createWorld(1)), 'ฤดูเพิ่งเริ่มต้องยังไม่จบ')
 

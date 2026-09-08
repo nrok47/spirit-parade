@@ -73,3 +73,6 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: st
 .board .agent.ghost .arange { stroke: #8f7ad6; }
 .board .agent.shaman .arange { stroke: #d68f7a; }
 .board .agent.police .arange { stroke: #7aa8d6; }
+.board .agent.thief .arange { stroke: #b0894f; }
+.board .agent.monk .arange { stroke: #d6c27a; }
+.board .agent.vendor .arange { stroke: #7ad6a8; }
