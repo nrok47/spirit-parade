@@ -185,7 +185,14 @@ export default function App() {
       py: myPos.y,
     }
     enqueue(s, [a])
-    sendAction(a).catch((e) => setNetErr((e as Error).message))
+    sendAction(a).catch((e) => {
+      const msg = (e as Error).message
+      setNetErr(
+        msg.includes('400')
+          ? 'ส่งขึ้นเมืองร่วมไม่ได้ (400) — ยังไม่ได้รัน db/002-no-season.sql ใน Supabase'
+          : msg,
+      )
+    })
   }
 
   const onBoard = (e: React.MouseEvent<SVGSVGElement>) => {

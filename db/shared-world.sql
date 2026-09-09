@@ -5,7 +5,7 @@
 create table if not exists public.actions (
   id             bigserial primary key,
   season         int  not null,
-  tick           int  not null check (tick >= 0 and tick < 720),
+  tick           int  not null check (tick >= 0), -- ไม่มีเพดานแล้ว ตั้งแต่ตัดระบบฤดูทิ้ง (ดู 002-no-season.sql)
   player         text not null check (char_length(player) between 2 and 24),
   avatar         text not null check (avatar in ('pootah','ghost','shaman','police')),
   power          text not null check (char_length(power) <= 24),
