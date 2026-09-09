@@ -22,6 +22,7 @@ export type Citizen = {
   age: number
   ties: number[] // เพื่อน/ญาติ 1-2 คน
   partner: number | null
+  legend?: string // ตัวละครจากนิยาย — ไม่แก่ ไม่ตาย ไม่หนี มีบทบาทเฉพาะตัว
   bornHere: boolean // เกิดในเมืองที่เทพรักษาไว้ = ศรัทธาต่อหัวมากกว่า
   gone: boolean
   cooldown: number // tick ที่รับเหตุการณ์ใหม่ได้อีกครั้ง
@@ -154,50 +155,184 @@ const FEAR_MULT: Record<Trait, number> = {
   ติดบ้าน: 0.9,
 }
 
-const ROSTER: [string, boolean, 'ช' | 'ญ', string, Zone, Trait, number][] = [
-  ['เก่ง', false, 'ช', 'ไรเดอร์', 'ซอยใน', 'ใจถึง', 27],
-  ['ริน', false, 'ญ', 'คนเดินระบบ', 'โกดัง', 'ติดบ้าน', 25],
-  ['ท่านขุน', true, 'ช', 'ผีเฝ้าด่าน', 'ศาลปู่ตา', 'ใจถึง', 60],
-  ['ป้าส้มตำ', false, 'ญ', 'แม่ค้า', 'ตลาด', 'ปากมาก', 52],
-  ['หลวงพ่อ', false, 'ช', 'คนงานศาล', 'ศาลปู่ตา', 'ขี้สงสาร', 66],
-  ['ยายคำ', false, 'ญ', 'แม่ค้า', 'ตลาด', 'ขี้กลัว', 58],
-  ['นางตานี', true, 'ญ', 'ผีตานี', 'ซอยใน', 'ขี้สงสาร', 40],
-  ['เสี่ยหมง', false, 'ช', 'พ่อค้า', 'โกดัง', 'ติดบ้าน', 44],
-  ['บักหำ', false, 'ช', 'รปภ.', 'ใต้สะพาน', 'ใจถึง', 31],
-  ['แม่ย่านาง', true, 'ญ', 'แม่ย่านาง', 'ท่าน้ำ', 'ขี้สงสาร', 70],
-  ['ตุ๊กตา', false, 'ญ', 'สแกมเมอร์', 'ใต้สะพาน', 'ปากมาก', 23],
-  ['ลุงมา', false, 'ช', 'คนงานศาล', 'ศาลปู่ตา', 'ขี้กลัว', 49],
+/**
+ * ตัวละครจากนิยาย Spirit Parade — อยู่ในเมืองตลอดไป ไม่แก่ ไม่ตาย ไม่หนีออกเมือง
+ * แต่ละคนมีบทบาทที่ทำงานเองวันละครั้ง (act) และเป็นตัวที่เอาไปทำคอนเทนต์โปรโมทนิยายได้
+ * เพิ่มตัวใหม่ = เพิ่ม 1 entry ในตารางนี้ ไม่ต้องแตะที่อื่น
+ */
+export const LEGENDS: {
+  name: string
+  sex: 'ช' | 'ญ'
+  spirit: boolean
+  job: string
+  zone: Zone
+  trait: Trait
+  age: number
+  role: string
+  act: (w: World, r: () => number, self: Citizen) => void
+}[] = [
+  {
+    name: 'เก่ง',
+    sex: 'ช',
+    spirit: false,
+    job: 'ไรเดอร์',
+    zone: 'ซอยใน',
+    trait: 'ใจถึง',
+    age: 27,
+    role: 'อ่านจังหวะเมืองออก — รู้ก่อนว่ากำลังจะมีเรื่อง',
+    act: () => {}, // บทบาทอยู่ตอน chain เริ่ม (ดู step)
+  },
+  {
+    name: 'ริน',
+    sex: 'ญ',
+    spirit: false,
+    job: 'คนเดินระบบ',
+    zone: 'โกดัง',
+    trait: 'ติดบ้าน',
+    age: 25,
+    role: 'ไล่ตามต้นตอของข่าว ทำให้เรื่องที่ไม่จริงลามช้าลงทั้งเมือง',
+    act: () => {}, // บทบาทอยู่ตอน chain ปล่อย tieFear
+  },
+  {
+    name: 'ท่านขุน',
+    sex: 'ช',
+    spirit: true,
+    job: 'ผีเฝ้าด่าน',
+    zone: 'ศาลปู่ตา',
+    trait: 'ใจถึง',
+    age: 60,
+    role: 'ยืนเฝ้าอยู่ตรงไหน ผีตนอื่นไม่กล้าเข้าย่านนั้น',
+    act: (w, _r, self) => {
+      for (const o of alive(w)) if (o.zone === self.zone) scare(o, -2.5)
+    },
+  },
+  {
+    name: 'ป้าส้มตำ',
+    sex: 'ญ',
+    spirit: false,
+    job: 'แม่ค้า',
+    zone: 'ตลาด',
+    trait: 'ปากมาก',
+    age: 52,
+    role: 'ปากคือทั้งยาและพิษ — ปลอบคนทั้งย่านได้ และปั่นเรื่องได้เหมือนกัน',
+    act: (w, r, self) => {
+      const here = alive(w).filter((c) => c.zone === self.zone)
+      if (r() < 0.65) for (const o of here) scare(o, -3)
+      else for (const o of here) scare(o, 4)
+    },
+  },
+  {
+    name: 'หลวงพ่อ',
+    sex: 'ช',
+    spirit: false,
+    job: 'คนงานศาล',
+    zone: 'ศาลปู่ตา',
+    trait: 'ขี้สงสาร',
+    age: 66,
+    role: 'ทำพิธีที่ศาลทุกวัน ศรัทธาเข้าหาปู่ตาเองโดยไม่ต้องทำอะไร',
+    act: (w) => {
+      if (!w.shared) w.faith += 3
+    },
+  },
+  {
+    name: 'นางตานี',
+    sex: 'ญ',
+    spirit: true,
+    job: 'ผีตานี',
+    zone: 'ซอยใน',
+    trait: 'ขี้สงสาร',
+    age: 40,
+    role: 'ผีที่คอยดูคนกลัวที่สุดในย่าน — เข้าไปปลอบ แต่คนที่ยังไม่ชินจะยิ่งขวัญเสีย',
+    act: (w, _r, self) => {
+      const here = alive(w).filter((c) => c.zone === self.zone && c.id !== self.id)
+      const worst = here.sort((a, b) => b.fear - a.fear)[0]
+      if (worst) scare(worst, -12)
+      for (const o of here) if (o.bornHere === false && o.id !== worst?.id) scare(o, 1.5)
+    },
+  },
+  {
+    name: 'แม่ย่านาง',
+    sex: 'ญ',
+    spirit: true,
+    job: 'แม่ย่านาง',
+    zone: 'ท่าน้ำ',
+    trait: 'ขี้สงสาร',
+    age: 70,
+    role: 'คุ้มคนที่เดินทาง — คนกล้าย้ายเข้ามาอยู่ในเมืองนี้มากขึ้น',
+    act: (w, r) => {
+      if (cityFear(w) < GROW_FEAR && alive(w).length < 26 && r() < 0.05) {
+        const boy = r() < 0.5
+        const c = newCitizen(
+          w,
+          pick(r, boy ? MALE : FEMALE),
+          boy ? 'ช' : 'ญ',
+          'ท่าน้ำ',
+          pick(r, [...TRAITS]),
+          20 + Math.floor(r() * 20),
+          false,
+        )
+        w.citizens.push(c)
+        build(w, r, 'ท่าน้ำ', c.id)
+        push(w, `มีคนลงเรือมาที่ท่าน้ำ ชื่อ ${c.name} ขอปลูกบ้านอยู่ที่นี่`, true)
+      }
+    },
+  },
 ]
+
+export const legendOf = (name?: string) => LEGENDS.find((l) => l.name === name)
+const hasLegend = (w: World, name: string) => alive(w).some((c) => c.legend === name)
 
 const MALE = ['บุญ', 'ต้อย', 'ตี๋', 'ชัย', 'หมู', 'เอก', 'ตูน', 'โจ้']
 const FEMALE = ['น้ำ', 'อ้อย', 'ก้อย', 'ดาว', 'ฝน', 'พลอย', 'แดง', 'เปิ้ล']
 const JOBS = ['ไรเดอร์', 'แม่ค้า', 'พ่อค้า', 'รปภ.', 'คนงานศาล', 'คนเดินระบบ']
 
 // ⚠️ seed มาจากข้างนอกเสมอ — ในโลกร่วมคือ seed ของฤดู ไม่ใช่ Date.now()
+// ⚠️ seed มาจากข้างนอกเสมอ — ในโลกร่วมคือ seed ของโลก ไม่ใช่ Date.now()
 export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'pootah'): World {
-  const citizens: Citizen[] = ROSTER.map(([name, spirit, sex, job, zone, trait, age], id) => ({
+  const r0 = rng(seed)
+  const citizens: Citizen[] = LEGENDS.map((l, id) => ({
     id,
-    name,
-    spirit,
-    sex,
-    job,
-    zone,
-    trait: TRAITS.includes(trait) ? trait : 'ติดบ้าน',
+    name: l.name,
+    spirit: l.spirit,
+    sex: l.sex,
+    job: l.job,
+    zone: l.zone,
+    trait: l.trait,
     fear: 20 + (id % 5) * 3,
-    age,
+    age: l.age,
     ties: [],
     partner: null,
+    legend: l.name,
     bornHere: false,
     gone: false,
     cooldown: 0,
   }))
+  // ชาวเมืองทั่วไป — สุ่มชื่อ อาชีพ ย่าน นิสัย ไม่ซ้ำกันทุกโลก
+  for (let i = 0; i < 6; i++) {
+    const boy = r0() < 0.5
+    citizens.push({
+      id: citizens.length,
+      name: pick(r0, boy ? MALE : FEMALE),
+      spirit: false,
+      sex: boy ? 'ช' : 'ญ',
+      job: pick(r0, JOBS),
+      zone: pick(r0, [...ZONES]),
+      trait: pick(r0, [...TRAITS]),
+      fear: 18 + Math.floor(r0() * 14),
+      age: 20 + Math.floor(r0() * 30),
+      ties: [],
+      partner: null,
+      bornHere: false,
+      gone: false,
+      cooldown: 0,
+    })
+  }
   // ผูกเพื่อนบ้านคนละ 1-2 คน — เพื่อนคือช่องทางที่ความกลัวเดินทาง
   for (const c of citizens) {
     const near = citizens.filter((o) => o.id !== c.id && o.zone === c.zone)
     c.ties = near.slice(0, 2).map((o) => o.id)
     if (!c.ties.length) c.ties = [citizens[(c.id + 1) % citizens.length].id]
   }
-  const r0 = rng(seed)
   const houses: House[] = citizens.map((c, i) => {
     const [zx, zy] = ZONE_POS[c.zone]
     return {
@@ -218,7 +353,6 @@ export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'poot
     nextMark: 0,
     agents: [],
     nextAgent: 0,
-    pos: { x: ZONE_POS['ศาลปู่ตา'][0], y: ZONE_POS['ศาลปู่ตา'][1] },
     tick: 0,
     faith: 30,
     nextId: citizens.length,
@@ -227,13 +361,13 @@ export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'poot
     wards: {},
     omenUntil: 0,
     runs: [],
+    pos: { x: ZONE_POS['ศาลปู่ตา'][0], y: ZONE_POS['ศาลปู่ตา'][1] },
     savedAt: Date.now(),
   }
 }
 
-// รายได้ต่อ tick ของแต่ละสาย — แยกออกมาเพื่อให้โลกร่วม replay คิดศรัทธาให้ทีละคนได้
+// รายได้ต่อ tick ของผู้เล่น — แยกออกมาเพื่อให้โลกร่วมคิดศรัทธาให้ทีละคนได้
 export function income(w: World, _avatar: AvatarId, r: () => number): number {
-  // ปู่ตากินจากคนที่เซ่นไหว้ — ยิ่งกลัวยิ่งไหว้ คนที่เกิดในเมืองนี้ให้มากกว่า
   let n = 0
   for (const c of alive(w))
     if (r() < c.fear / 260) {
@@ -332,7 +466,9 @@ function playBeat(w: World, run: ChainRun, r: () => number) {
   if (beat.fear) scare(c, beat.fear)
   if (beat.zoneFear)
     for (const o of alive(w)) if (o.zone === c.zone) scare(o, beat.zoneFear)
-  if (beat.tieFear) for (const id of c.ties) { const o = byId(w, id); if (o && !o.gone) scare(o, beat.tieFear) }
+  // ริน ไล่ตามต้นตอของข่าว เรื่องที่ไม่จริงจึงลามช้าลงทั้งเมือง
+  const rumor = beat.tieFear ? beat.tieFear * (hasLegend(w, 'ริน') ? 0.4 : 1) : 0
+  if (rumor) for (const id of c.ties) { const o = byId(w, id); if (o && !o.gone) scare(o, rumor) }
   // ศรัทธาจาก chain เป็นเรื่องของปู่ตาโดยตรง (คนไหว้/เลิกไหว้) สายอื่นกินคนละทาง
   if (beat.faith && w.avatar === 'pootah' && !w.shared) w.faith = Math.max(0, w.faith + beat.faith)
   push(w, beat.text(c, w), !!beat.notable)
@@ -393,6 +529,8 @@ function jobsWork(w: World, r: () => number) {
   const people = alive(w)
   const inZone = (z: Zone) => people.filter((c) => c.zone === z)
   for (const c of people) {
+    const lg = legendOf(c.legend)
+    if (lg) lg.act(w, r, c)
     if (c.job === 'แม่ค้า' || c.job === 'พ่อค้า') {
       for (const o of inZone(c.zone)) scare(o, -1.5) // ย่านมีคนค้าขาย คนกล้าออกจากบ้าน
     } else if (c.job === 'รปภ.') {
@@ -491,14 +629,14 @@ function lifeCycle(w: World, r: () => number) {
   // แก่ตัวลง (1 ปี = 30 วัน) + ตายตามอายุ
   if (day(w) % YEAR_DAYS === 0) {
     for (const c of alive(w)) {
-      c.age++
+      if (!c.legend) c.age++
       if (c.job === 'เด็ก' && c.age >= 15) {
         c.job = JOBS[c.id % JOBS.length]
         leaveHouse(w, c.id)
         build(w, r, c.zone, c.id)
         push(w, `${c.name} โตพอจะแยกออกไปปลูกบ้านของตัวเองแล้ว`, true)
       }
-      if (!c.spirit && c.age > 72 && r() < 0.25) {
+      if (!c.spirit && !c.legend && c.age > 72 && r() < 0.25) {
         c.gone = true
         leaveHouse(w, c.id)
         for (const id of c.ties) { const o = byId(w, id); if (o && !o.gone) scare(o, 14) }
@@ -635,6 +773,9 @@ export function step(w: World) {
         if (idx === 0 && people.some((o) => o.job === 'รปภ.' && o.zone === c.zone) && r() < 0.6) return
         c.cooldown = w.tick + EVENT_COOLDOWN * 3
         w.runs.push({ chain: idx, step: 0, who: c.id, at: w.tick + CHAINS[idx].beats[0].after })
+        // เก่งอ่านจังหวะเมืองออก — เตือนล่วงหน้าว่ากำลังจะมีเรื่องที่ไหน
+        if (idx <= 1 && hasLegend(w, 'เก่ง') && r() < 0.7)
+          push(w, `เก่งขี่ผ่าน${c.zone}แล้วชะลอรถ "แถวนี้มันเริ่มไม่ค่อยดีแล้วนะ"`, true)
       }
     }
   }
@@ -644,7 +785,8 @@ export function step(w: World) {
 
   // 5) คนที่กลัวเกินเพดานหนีออกจากเมือง
   if (w.tick >= w.omenUntil)
-    for (const c of people)
+    for (const c of people) {
+      if (c.legend) continue // ตัวละครจากนิยายไม่หนีออกจากเมืองนี้
       if (c.fear >= LEAVE_FEAR && r() < 0.06) {
         const [cx, cy] = citizenPos(w, c)
         if (nearMark(w, 'shelter', cx, cy)) {
@@ -661,6 +803,7 @@ export function step(w: World) {
         for (const id of c.ties) { const o = byId(w, id); if (o && !o.gone) scare(o, 12) }
         push(w, `${c.name} เก็บของออกจากเมืองไปกลางดึก ไม่บอกใคร`, true)
       }
+    }
 
   // 6) ปกปักหมดอายุ
   for (const z of ZONES)
@@ -930,8 +1073,9 @@ export function selfCheck() {
   }
   console.assert(a.faith > b.faith, 'กลัวมาก ต้องได้ศรัทธามากกว่าเมืองสงบ')
   console.assert(a.citizens.some((c) => c.gone), 'กลัวเกินเพดาน ต้องมีคนหนีออกเมือง')
-  console.assert(alive(b).length > 12, 'เมืองที่ไม่กลัว ต้องโตขึ้น (ย้ายเข้า/มีลูก)')
-  console.assert(alive(a).length <= 12, 'เมืองที่กลัวตลอด ต้องไม่โต')
+  const start = createWorld(1).citizens.length
+  console.assert(alive(b).length > start, 'เมืองที่ไม่กลัว ต้องโตขึ้น (ย้ายเข้า/มีลูก)')
+  console.assert(alive(a).length <= start, 'เมืองที่กลัวตลอด ต้องไม่โต')
   console.assert(b.log.filter((l) => l.notable).length > 3, 'ต้องมีเรื่องที่ควรรู้เกิดขึ้นบ้าง')
   console.assert(b.log.length < 400, 'log ต้องไม่ท่วมจนกลายเป็น noise')
 
@@ -1130,6 +1274,27 @@ export function selfCheck() {
   for (let i = 0; i < 24; i++) step(jb)
   const tz1 = alive(jb).filter((c) => c.zone === traderZone).reduce((n, c) => n + c.fear, 0)
   console.assert(tz1 < tz0 + 5, 'ย่านที่มีแม่ค้าต้องไม่กลัวขึ้นเฉยๆ อาชีพต้องมีผลจริง')
+
+  const lg = createWorld(81)
+  console.assert(
+    LEGENDS.every((l) => lg.citizens.some((c) => c.legend === l.name)),
+    'ตัวละครนิยายต้องอยู่ในเมืองตั้งแต่เริ่ม',
+  )
+  const rnd1 = createWorld(82).citizens.filter((c) => !c.legend).map((c) => c.name).join()
+  const rnd2 = createWorld(83).citizens.filter((c) => !c.legend).map((c) => c.name).join()
+  console.assert(rnd1 !== rnd2, 'ชาวเมืองทั่วไปต้องสุ่มชื่อ ไม่ใช่ชุดเดิมทุกโลก')
+
+  const imm = createWorld(84)
+  imm.citizens.forEach((c) => (c.fear = 99))
+  for (let i = 0; i < 24 * 365 * 3; i++) step(imm)
+  console.assert(
+    LEGENDS.every((l) => imm.citizens.some((c) => c.legend === l.name && !c.gone)),
+    'ตัวละครนิยายต้องไม่ตายและไม่หนี แม้เมืองจะแตกตื่นสามปี',
+  )
+  console.assert(
+    imm.citizens.filter((c) => c.legend).every((c) => c.age === legendOf(c.legend)!.age),
+    'ตัวละครนิยายต้องไม่แก่ขึ้น',
+  )
 
   // PIN แยกเมืองในเครื่องเดียวกัน
   const wA = createWorld(51)

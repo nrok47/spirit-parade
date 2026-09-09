@@ -5,6 +5,7 @@ import {
   BOARD,
   HIRE,
   LANDMARK,
+  legendOf,
   RADIUS,
   ZONES,
   ZONE_POS,
@@ -421,17 +422,19 @@ export default function App() {
                       key={c.id}
                       cx={cx}
                       cy={cy}
-                      r={pickable ? 2.4 : 1.7}
-                      className={`dot ${c.spirit ? 'spirit' : ''} ${pickable ? 'pick' : ''}`}
+                      r={pickable ? 2.6 : c.legend ? 2.2 : 1.7}
+                      className={`dot ${c.spirit ? 'spirit' : ''} ${c.legend ? 'legend' : ''} ${pickable ? 'pick' : ''}`}
                       style={{ fill: fearColor(c.fear) }}
                       onClick={(e) => {
                         e.stopPropagation()
                         if (pickable) fire(aim, c)
                       }}
                     >
-                      <title>{`${c.spirit ? '👻' : '🧍'} ${c.name} · ${c.job} · ${c.trait} · กลัว ${Math.round(
-                        c.fear,
-                      )}${(view.haunt[c.id] ?? 0) > view.tick ? ' · ถูกตามติด' : ''}`}</title>
+                      <title>{`${c.spirit ? '👻' : '🧍'} ${c.name}${
+                        legendOf(c.legend) ? ' ★ — ' + legendOf(c.legend)!.role : ` · ${c.job} · ${c.trait}`
+                      } · กลัว ${Math.round(c.fear)}${
+                        (view.haunt[c.id] ?? 0) > view.tick ? ' · ถูกตามติด' : ''
+                      }`}</title>
                     </circle>
                   )
                 })}
@@ -471,10 +474,15 @@ export default function App() {
             <li
               key={c.id}
               className={citizenInRange(view, c) ? '' : 'out'}
-              title={`${c.job} · ${c.zone} · ${c.trait} · ${c.sex} · กลัว ${Math.round(c.fear)}`}
+              title={
+                legendOf(c.legend)
+                  ? `${c.name} — ${legendOf(c.legend)!.role}`
+                  : `${c.job} · ${c.zone} · ${c.trait} · ${c.sex} · กลัว ${Math.round(c.fear)}`
+              }
             >
-              <span className="nm">
+              <span className={`nm ${c.legend ? 'legend' : ''}`}>
                 {c.spirit ? '👻' : '🧍'} {c.name}
+                {c.legend ? ' ★' : ''}
               </span>
               <i style={{ background: fearColor(c.fear) }} />
               <span className="mk">

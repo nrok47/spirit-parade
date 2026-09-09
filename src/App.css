@@ -91,3 +91,5 @@ main { display: grid; grid-template-columns: minmax(420px, 1.4fr) minmax(230px, 
 .board .mrange { fill: rgba(214, 194, 122, .05); stroke-width: .3; stroke-dasharray: .8 1.2; }
 .board .mark.shrine .mrange { stroke: #e0c07a; }
 .board .mark.shelter .mrange { stroke: #7ab4d6; }
+.roster .nm.legend { color: #e0c07a; }
+.board .dot.legend { stroke: #e0c07a; stroke-width: .8; }
