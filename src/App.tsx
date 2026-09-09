@@ -10,10 +10,11 @@ import {
   alive,
   avatarOf,
   castPower,
+  calendar,
   cityFear,
   citizenInRange,
   createWorld,
-  houseOf,
+
   inRange,
   load,
   moveTo,
@@ -215,7 +216,7 @@ export default function App() {
   const people = alive(view)
   const fear = cityFear(view)
   const faith = Math.floor(mode === 'shared' ? myFaith : view.faith)
-  const dayNo = Math.floor(view.tick / 24) + 1
+  const cal = calendar(view)
 
   const fire = (p: Power, c?: Citizen, z?: Zone) => {
     if (mode === 'local') {
@@ -285,8 +286,12 @@ export default function App() {
           <b>{faith}</b>
         </div>
         <div className="stat">
+          <span>ปีที่</span>
+          <b>{cal.year}</b>
+        </div>
+        <div className="stat">
           <span>วันที่</span>
-          <b>{dayNo}</b>
+          <b>{cal.day}</b>
         </div>
         <div className="me" title={me_.income}>
           {me_.icon} {me_.name}
@@ -450,6 +455,26 @@ export default function App() {
           </g>
         </svg>
 
+        <ul className="roster" title="คนที่จางคืออยู่นอกวงที่เอื้อมถึง">
+          {people.map((c) => (
+            <li
+              key={c.id}
+              className={citizenInRange(view, c) ? '' : 'out'}
+              title={`${c.job} · ${c.zone} · ${c.trait} · ${c.sex} · กลัว ${Math.round(c.fear)}`}
+            >
+              <span className="nm">
+                {c.spirit ? '👻' : '🧍'} {c.name}
+              </span>
+              <i style={{ background: fearColor(c.fear) }} />
+              <span className="mk">
+                {c.partner !== null ? '💍' : ''}
+                {c.bornHere ? '✨' : ''}
+                {(view.haunt[c.id] ?? 0) > view.tick ? '🕯' : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+
         <ol className="log">
           {view.log.map((l, i) => (
             <li key={`${l.t}-${i}`} className={l.notable ? 'notable' : ''}>
@@ -459,17 +484,6 @@ export default function App() {
         </ol>
       </main>
 
-      <ul className="roster">
-        {people.map((c) => (
-          <li key={c.id} className={houseOf(view, c.id) && citizenInRange(view, c) ? '' : 'out'}>
-            {c.spirit ? '👻' : '🧍'} {c.name}
-            <i style={{ background: fearColor(c.fear) }} />
-            {c.partner !== null ? '💍' : ''}
-            {c.bornHere ? '✨' : ''}
-            {(view.haunt[c.id] ?? 0) > view.tick ? '🕯' : ''}
-          </li>
-        ))}
-      </ul>
     </div>
   )
 }

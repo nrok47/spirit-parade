@@ -1,6 +1,6 @@
 :root { color-scheme: dark; }
 body { margin: 0; background: #14100f; color: #e8ded2; font-family: 'Sarabun', system-ui, sans-serif; }
-.app { max-width: 900px; margin: 0 auto; padding: 16px; }
+.app { max-width: 1700px; margin: 0 auto; padding: 16px 24px; }
 header { display: flex; gap: 20px; align-items: baseline; flex-wrap: wrap; border-bottom: 1px solid #3a2f28; padding-bottom: 12px; }
 .stat { display: flex; flex-direction: column; }
 .stat span { font-size: 12px; opacity: .6; }
@@ -16,8 +16,9 @@ button.on { background: #6b4a2a; border-color: #a97c4a; }
 .zone { font-size: 13px; }
 .zone.pick { border-color: #a97c4a; }
 .zone.warded { background: #2b3a2b; }
-main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
-@media (max-width: 700px) { main { grid-template-columns: 1fr; } }
+main { display: grid; grid-template-columns: minmax(420px, 1.4fr) minmax(230px, 0.6fr) minmax(340px, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 1250px) { main { grid-template-columns: minmax(360px, 1.3fr) minmax(300px, 1fr); } main > .roster { grid-column: 2; } }
+@media (max-width: 760px) { main { grid-template-columns: 1fr; } }
 .citizens { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .citizens button { display: grid; gap: 2px; width: 100%; text-align: left; padding: 6px 8px; }
 .citizens .who { font-size: 14px; }
@@ -25,7 +26,7 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: st
 .bar { display: block; height: 3px; background: #3a2f28; border-radius: 2px; overflow: hidden; }
 .bar i { display: block; height: 100%; }
 .gone { opacity: .3; text-decoration: line-through; }
-.log { list-style: none; margin: 0; padding: 0; max-height: 70vh; overflow-y: auto; font-size: 13px; line-height: 1.6; }
+.log { list-style: none; margin: 0; padding: 0; max-height: 78vh; overflow-y: auto; font-size: 13px; line-height: 1.6; }
 .log li { padding: 6px 0; border-bottom: 1px solid #241d19; }
 
 .log li.notable { color: #f0d9a8; border-left: 2px solid #a97c4a; padding-left: 8px; }
@@ -47,7 +48,7 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: st
 .citizens button.pick { border-color: #a97c4a; }
 .citizens button.pick:hover { background: #33261c; }
 
-.board { width: 100%; aspect-ratio: 1; background: #1b1512; border: 1px solid #3a2f28; border-radius: 8px; cursor: crosshair; user-select: none; }
+.board { width: 100%; max-height: 78vh; aspect-ratio: 1; background: #1b1512; border: 1px solid #3a2f28; border-radius: 8px; cursor: crosshair; user-select: none; }
 .board .ground { fill: #1b1512; }
 .board .zlabel { fill: #6b5a4a; font-size: 3.4px; text-anchor: middle; pointer-events: none; }
 .board .halo { fill: rgba(169, 124, 74, .1); stroke: #a97c4a; stroke-width: .5; stroke-dasharray: 2 1.6; pointer-events: none; }
@@ -59,8 +60,8 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: st
 .board .avatar circle { fill: #6b4a2a; stroke: #e8ded2; stroke-width: .6; }
 .board .avatar text { font-size: 4px; text-anchor: middle; pointer-events: none; }
 .zone.far { opacity: .4; }
-.roster { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 12px 0 0; margin: 12px 0 0; border-top: 1px solid #241d19; font-size: 12px; }
-.roster li { display: flex; align-items: center; gap: 4px; }
+.roster { list-style: none; display: grid; gap: 2px; padding: 0; margin: 0; font-size: 12px; max-height: 78vh; overflow-y: auto; }
+.roster li { display: grid; grid-template-columns: 1fr 34px auto; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px; background: #1b1512; white-space: nowrap; }
 .roster li.out { opacity: .4; }
 .roster i { width: 20px; height: 3px; border-radius: 2px; display: inline-block; }
 
@@ -82,3 +83,6 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: st
 .pinbox input:focus { outline: none; border-color: #a97c4a; }
 .lead.small { font-size: 12px; margin-top: 14px; }
 .pinchip { font-size: 12px; opacity: .7; border-radius: 20px; }
+.roster .nm { overflow: hidden; text-overflow: ellipsis; }
+.roster .mk { font-size: 10px; letter-spacing: 1px; }
+.roster i { height: 4px; }

@@ -210,12 +210,18 @@ export const cityFear = (w: World) => {
   const a = alive(w)
   return a.length ? Math.round(a.reduce((s, c) => s + c.fear, 0) / a.length) : 0
 }
+export const YEAR_DAYS = 30 // 1 ปีในเมือง = 30 วัน (ตรงกับจังหวะที่ชาวเมืองแก่ขึ้น 1 ปี)
 const day = (w: World) => Math.floor(w.tick / 24) + 1
+export const calendar = (w: World) => ({
+  year: Math.floor((day(w) - 1) / YEAR_DAYS) + 1,
+  day: ((day(w) - 1) % YEAR_DAYS) + 1,
+})
 const byId = (w: World, id: number) => w.citizens.find((c) => c.id === id)
 
 function push(w: World, text: string, notable = false) {
   if (w.quiet && !notable) return
-  w.log.unshift({ t: w.tick, text: `วันที่ ${day(w)} — ${text}`, notable })
+  const cal = calendar(w)
+  w.log.unshift({ t: w.tick, text: `ปีที่ ${cal.year} วันที่ ${cal.day} — ${text}`, notable })
   if (w.log.length > 300) w.log.length = 300
 }
 
@@ -417,7 +423,7 @@ function lifeCycle(w: World, r: () => number) {
   }
 
   // แก่ตัวลง (1 ปี = 30 วัน) + ตายตามอายุ
-  if (day(w) % 30 === 0) {
+  if (day(w) % YEAR_DAYS === 0) {
     for (const c of alive(w)) {
       c.age++
       if (c.job === 'เด็ก' && c.age >= 15) {
