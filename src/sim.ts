@@ -210,7 +210,7 @@ export const cityFear = (w: World) => {
   const a = alive(w)
   return a.length ? Math.round(a.reduce((s, c) => s + c.fear, 0) / a.length) : 0
 }
-export const YEAR_DAYS = 30 // 1 ปีในเมือง = 30 วัน (ตรงกับจังหวะที่ชาวเมืองแก่ขึ้น 1 ปี)
+export const YEAR_DAYS = 365 // 1 ปีในเมือง = 365 วัน (ชาวเมืองแก่ขึ้น 1 ปีทุก 365 วันตามไปด้วย)
 const day = (w: World) => Math.floor(w.tick / 24) + 1
 export const calendar = (w: World) => ({
   year: Math.floor((day(w) - 1) / YEAR_DAYS) + 1,
