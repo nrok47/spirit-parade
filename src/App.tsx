@@ -5,27 +5,21 @@ import {
   BOARD,
   HIRE,
   LANDMARK,
-  legendOf,
-  wraithCount,
   RADIUS,
   ZONES,
   ZONE_POS,
   alive,
   avatarOf,
-  castPower,
   calendar,
+  castPower,
   cityFear,
   citizenInRange,
-  createWorld,
-
   inRange,
-  load,
+  legendOf,
   moveTo,
   powersOf,
-  runToNotable,
-  save,
   selfCheck,
-  step,
+  wraithCount,
   type Citizen,
   type Power,
   type World,
@@ -51,9 +45,6 @@ import {
   type Shared,
 } from './net'
 
-const SPEEDS = [0, 1, 4]
-const BASE_MS = 2000 // เมืองส่วนตัว: 1 ชั่วโมงในเมือง = 2 วินาทีจริง (เมืองร่วมใช้ MS_PER_TICK ซึ่งช้ากว่า)
-
 if (import.meta.env.DEV) {
   selfCheck()
   netSelfCheck()
@@ -62,12 +53,12 @@ if (import.meta.env.DEV) {
 const fearColor = (f: number) => (f >= 70 ? '#e05b4a' : f >= 40 ? '#e0a13a' : '#5aa46a')
 
 function PinGate({ onEnter }: { onEnter: (pin: string) => void }) {
-  const [pin, setPin_] = useState('')
+  const [pin, setLocal] = useState('')
   const ok = /^\d{3,6}$/.test(pin)
   return (
     <div className="app picker">
       <h1>Spirit Parade</h1>
-      <p className="lead">ใส่เลขของตัวเองไว้จำเมือง — ตั้งเองได้ ไม่มีรหัสผ่าน</p>
+      <p className="lead">ใส่เลขของตัวเองไว้จำว่าใครเป็นใครในเมือง — ตั้งเองได้ ไม่มีรหัสผ่าน</p>
       <form
         className="pinbox"
         onSubmit={(e) => {
@@ -81,59 +72,43 @@ function PinGate({ onEnter }: { onEnter: (pin: string) => void }) {
           placeholder="เช่น 123"
           maxLength={6}
           value={pin}
-          onChange={(e) => setPin_(e.target.value.replace(/\D/g, ''))}
+          onChange={(e) => setLocal(e.target.value.replace(/\D/g, ''))}
         />
         <button disabled={!ok}>เข้าเมือง</button>
       </form>
-      <p className="lead small">เลขเดิม = เมืองเดิมและศรัทธาเดิม · เลขใหม่ = เริ่มเมืองใหม่</p>
+      <p className="lead small">เลขเดิม = ศรัทธาและคนที่จ้างไว้ยังเป็นของคุณ · เมืองมีใบเดียว ทุกคนอยู่ด้วยกัน</p>
     </div>
   )
 }
 
 export default function App() {
   const [pin, setPinState] = useState<string | null>(() => getPin())
-  const [mode, setMode] = useState<'local' | 'shared'>(
-    () => (localStorage.getItem('sp-mode') as 'local' | 'shared') ?? 'local',
-  )
-  const [w, setW] = useState<World | null>(() => {
-    const p = getPin()
-    return p ? (load(BASE_MS, p) ?? createWorld(Date.now() % 100000)) : null
-  })
-  const [speed, setSpeed] = useState(1)
-  const [aim, setAim] = useState<Power | null>(null)
-
-  // --- โลกร่วม ---
-  const [shared, setShared] = useState<World | null>(null)
-  const [netErr, setNetErr] = useState<string | null>(null)
+  const [view, setView] = useState<World | null>(null)
+  const [faith, setFaith] = useState(0)
   const [players, setPlayers] = useState<string[]>([])
-  const [myFaith, setMyFaith] = useState(0)
-  const sh = useRef<Shared | null>(null) // โลกร่วมเดินต่อในนี้ ไม่สร้างใหม่ทุก tick
-  const lastId = useRef(0)
+  const [netErr, setNetErr] = useState<string | null>(null)
+  const [aim, setAim] = useState<Power | null>(null)
   const [myPos, setMyPos] = useState({ x: ZONE_POS['ศาลปู่ตา'][0], y: ZONE_POS['ศาลปู่ตา'][1] })
 
-  const ref = useRef(w)
-  useEffect(() => {
-    ref.current = w
-  })
+  const sh = useRef<Shared | null>(null)
+  const lastId = useRef(0)
   const posRef = useRef(myPos)
   useEffect(() => {
     posRef.current = myPos
   }, [myPos])
 
-  // เดินโลกร่วมไปจนถึงเวลาจริง แล้วเอาผลมาแสดง (ไม่สร้างโลกใหม่ทั้งใบ)
-  const tickShared = useCallback(() => {
+  const tick = useCallback(() => {
     const s = sh.current
     if (!s) return
     advance(s, nowTick())
     s.world.pos = posRef.current
-    setShared({ ...s.world })
+    setView({ ...s.world })
     setPlayers(Object.keys(s.joined))
-    setMyFaith(purseOf(s, me()))
+    setFaith(purseOf(s, me()))
   }, [])
 
-  // โลกร่วม: ดึงเฉพาะของใหม่ทุก 8 วินาที · เดินเวลาเองทุก tick
   useEffect(() => {
-    if (mode !== 'shared') return
+    if (!pin) return
     let dead = false
     if (!sh.current) {
       sh.current = createShared()
@@ -148,49 +123,20 @@ export default function App() {
           lastId.current = Math.max(lastId.current, ...list.map((a) => (a as Action & { id: number }).id ?? 0))
           enqueue(sh.current, list)
         }
-        tickShared()
+        tick()
       } catch (e) {
         if (!dead) setNetErr((e as Error).message)
       }
     }
     pull()
     const p = setInterval(pull, 8000)
-    const t = setInterval(tickShared, MS_PER_TICK)
+    const t = setInterval(tick, MS_PER_TICK)
     return () => {
       dead = true
       clearInterval(p)
       clearInterval(t)
     }
-  }, [mode, tickShared])
-
-  useEffect(() => {
-    if (mode !== 'local' || !SPEEDS[speed]) return
-    const id = setInterval(() => {
-      const cur = ref.current
-      if (!cur) return
-      const next = { ...cur }
-      step(next)
-      setW(next)
-    }, BASE_MS / SPEEDS[speed])
-    return () => clearInterval(id)
-  }, [speed, mode])
-
-  useEffect(() => {
-    if (!pin) return
-    const id = setInterval(() => ref.current && save(ref.current, pin), 5000)
-    const bye = () => ref.current && save(ref.current, pin)
-    window.addEventListener('beforeunload', bye)
-    return () => {
-      clearInterval(id)
-      window.removeEventListener('beforeunload', bye)
-    }
-  }, [pin])
-
-  const switchMode = (m: 'local' | 'shared') => {
-    localStorage.setItem('sp-mode', m)
-    setMode(m)
-    setAim(null)
-  }
+  }, [pin, tick])
 
   if (!pin)
     return (
@@ -198,44 +144,35 @@ export default function App() {
         onEnter={(v) => {
           setPin(v)
           setPinState(v)
-          setW(load(BASE_MS, v) ?? createWorld(Date.now() % 100000))
         }}
       />
     )
 
-  const view = mode === 'shared' ? shared : w
   if (!view)
     return (
       <div className="app picker">
-        <h1>กำลังต่อเข้าเมืองร่วม…</h1>
+        <h1>กำลังตามเมืองให้ทัน…</h1>
         {netErr && <p className="lead err">{netErr}</p>}
-        <div className="powers">
-          <button onClick={() => switchMode('local')}>กลับไปเล่นเมืองของตัวเอง</button>
-        </div>
       </div>
     )
 
-  const me_ = avatarOf(view)
+  const god = avatarOf(view)
   const people = alive(view)
   const fear = cityFear(view)
-  const faith = Math.floor(mode === 'shared' ? myFaith : view.faith)
+  const purse = Math.floor(faith)
   const cal = calendar(view)
-  const nk = wraithCount(view)
+  const wr = wraithCount(view)
+  const others = players.filter((id) => id !== me())
 
   const fire = (p: Power, c?: Citizen, z?: Zone) => {
-    if (mode === 'local') {
-      const next = { ...w! }
-      if (castPower(next, p.key, c, z)) setW(next)
-      setAim(null)
-      return
-    }
-    // โลกร่วม: ลองในเครื่องก่อน ผ่านแล้วค่อยส่งขึ้นไป
-    // ต้อง clone ลึก — { ...view } แชร์ citizens/agents/log กับของจริง การลองจะไปแก้เมืองที่แสดงอยู่
-    const probe = structuredClone(view)
-    if (!castPower(probe, p.key, c, z)) {
-      setAim(null)
-      return
-    }
+    setAim(null)
+    const s = sh.current
+    if (!s) return
+    // ลองกับสำเนาก่อน จะได้ไม่ส่งของที่ทำไม่ได้ขึ้นไป (ปุ่มที่กดแล้วเงียบคือบั๊กเสมอ)
+    const probe = structuredClone(s.world)
+    probe.faith = faith
+    moveTo(probe, myPos.x, myPos.y)
+    if (!castPower(probe, p.key, c, z)) return
     const a: Action = {
       season: SEASON,
       tick: nowTick(),
@@ -247,32 +184,18 @@ export default function App() {
       px: myPos.x,
       py: myPos.y,
     }
-    setAim(null)
-    // ของตัวเองก็เข้าคิวเหมือนของคนอื่น จะได้เห็นผลตอนเดียวกับที่เครื่องอื่นเห็น
-    if (sh.current) enqueue(sh.current, [a])
+    enqueue(s, [a])
     sendAction(a).catch((e) => setNetErr((e as Error).message))
   }
-
-  const tapPower = (p: Power) => (p.target === 'none' ? fire(p) : setAim(aim?.key === p.key ? null : p))
 
   const onBoard = (e: React.MouseEvent<SVGSVGElement>) => {
     if (aim) return
     const r = e.currentTarget.getBoundingClientRect()
-    const x = ((e.clientX - r.left) / r.width) * BOARD
-    const y = ((e.clientY - r.top) / r.height) * BOARD
-    if (mode === 'shared') {
-      setMyPos({ x: Math.round(x), y: Math.round(y) })
-      const next = { ...view }
-      moveTo(next, x, y)
-      setShared(next)
-      return
-    }
-    const next = { ...w! }
-    moveTo(next, x, y)
-    setW(next)
+    setMyPos({
+      x: Math.round(((e.clientX - r.left) / r.width) * BOARD),
+      y: Math.round(((e.clientY - r.top) / r.height) * BOARD),
+    })
   }
-
-  const others = players.filter((id) => id !== me())
 
   return (
     <div className="app">
@@ -285,15 +208,18 @@ export default function App() {
           <span>ความกลัว</span>
           <b style={{ color: fearColor(fear) }}>{fear}</b>
         </div>
-        {nk > 0 && (
-          <div className="stat" title="คนที่นิลกาฬจับไปทดลองแล้วกลับมาเป็นผีร้าย — พระหรือหมอผีส่งไปเกิดได้ · ปกปักกันไม่ให้เข้าย่าน">
+        {wr > 0 && (
+          <div
+            className="stat"
+            title="คนที่นิลกาฬจับไปทดลองแล้วกลับมาเป็นผีร้าย — พระหรือหมอผีส่งไปเกิดได้ · ปกปักกันไม่ให้เข้าย่าน"
+          >
             <span>ผีร้าย</span>
-            <b className="bad">{nk}</b>
+            <b className="bad">{wr}</b>
           </div>
         )}
         <div className="stat">
           <span>ศรัทธา</span>
-          <b>{faith}</b>
+          <b>{purse}</b>
         </div>
         <div className="stat">
           <span>ปีที่</span>
@@ -303,92 +229,65 @@ export default function App() {
           <span>วันที่</span>
           <b>{cal.day}</b>
         </div>
-        <div className="me" title={me_.income}>
-          {me_.icon} {me_.name}
+        <div className="me" title={god.income}>
+          {god.icon} {god.name}
         </div>
         <button
           className="pinchip"
           title="เปลี่ยนเลขผู้เล่น"
           onClick={() => {
-            if (w) save(w, pin)
             clearPin()
             setPinState(null)
           }}
         >
           #{pin}
         </button>
-        <div className="speeds">
-          <button className={mode === 'local' ? 'on' : ''} onClick={() => switchMode('local')} title="เมืองของตัวเอง">
-            🏠
-          </button>
-          <button className={mode === 'shared' ? 'on' : ''} onClick={() => switchMode('shared')} title="เมืองร่วม">
-            🌐
-          </button>
-          {mode === 'local' &&
-            ['⏸', '▶', '⏩'].map((s, i) => (
-              <button key={i} className={speed === i ? 'on' : ''} onClick={() => setSpeed(i)}>
-                {s}
-              </button>
-            ))}
-        </div>
       </header>
 
-      {mode === 'shared' && (
-        <div className="netbar">
-          {netErr ? (
-            <span className="err">⚠ {netErr}</span>
-          ) : (
-            <span>
-              เมืองร่วม · เวลาเดินตามจริง ไม่มีวันจบ · ของที่กดจะเข้าเมืองใน {(APPLY_LAG * MS_PER_TICK) / 1000} วินาที · คนอื่นในเมืองนี้{' '}
-              {others.length ? others.join(' · ') : 'ยังไม่มีใคร'}
-            </span>
-          )}
-        </div>
-      )}
+      <div className="netbar">
+        {netErr ? (
+          <span className="err">⚠ {netErr}</span>
+        ) : (
+          <span>
+            เมืองมีใบเดียว เดินตามเวลาจริงตลอด ไม่มีวันจบ · ของที่กดเข้าเมืองใน{' '}
+            {(APPLY_LAG * MS_PER_TICK) / 1000} วินาที · คนอื่นที่เคยลงมือในเมืองนี้{' '}
+            {others.length ? others.map((id) => `#${id}`).join(' · ') : 'ยังไม่มีใคร'}
+          </span>
+        )}
+      </div>
 
       <div className="powers">
         {powersOf(view).map((p) => (
           <button
             key={p.key}
             title={p.hint}
-            disabled={faith < p.cost}
+            disabled={purse < p.cost}
             className={aim?.key === p.key ? 'on' : ''}
-            onClick={() => tapPower(p)}
+            onClick={() => (p.target === 'none' ? fire(p) : setAim(aim?.key === p.key ? null : p))}
           >
             {p.name} · {p.cost}
           </button>
         ))}
-        {mode === 'local' && (
-          <button
-            onClick={() => {
-              const next = { ...w! }
-              runToNotable(next)
-              setW(next)
-            }}
-          >
-            ⏭ ข้ามไปเรื่องถัดไป
-          </button>
-        )}
         <span className="hint">
           {aim
             ? `เลือก${aim.target === 'zone' ? 'ย่าน' : 'คน'}ในวง เพื่อ${aim.name}`
-            : 'คลิกกระดานเพื่อย้ายไปยืนที่นั่น แล้วจ้างคนลงตรงนั้น — เขาจะทำงานของเขาเอง'}
+            : 'คลิกกระดานเพื่อย้ายไปยืนตรงนั้น — พรทำงานเฉพาะในวง'}
         </span>
       </div>
 
       <div className="zones">
         {ZONES.map((z) => {
-          const on = (view.wards[z] ?? 0) > view.tick
+          const warded = (view.wards[z] ?? 0) > view.tick
           const near = inRange(view, ZONE_POS[z][0], ZONE_POS[z][1])
           const pickable = aim?.target === 'zone' && near
           return (
             <button
               key={z}
               disabled={aim?.target === 'zone' && !near}
-              className={`zone ${on ? 'warded' : ''} ${pickable ? 'pick' : ''} ${near ? '' : 'far'}`}
+              className={`zone ${warded ? 'warded' : ''} ${pickable ? 'pick' : ''} ${near ? '' : 'far'}`}
               onClick={() => pickable && fire(aim, undefined, z as Zone)}
             >
-              {on ? '🪬 ' : ''}
+              {warded ? '🪬 ' : ''}
               {z}
             </button>
           )
@@ -405,6 +304,16 @@ export default function App() {
           ))}
 
           <circle cx={view.pos.x} cy={view.pos.y} r={RADIUS} className="halo" />
+
+          {view.marks.map((m) => (
+            <g key={`m${m.id}`} className={`mark ${m.kind}`}>
+              <circle cx={m.x} cy={m.y} r={LANDMARK[m.kind].radius} className="mrange" />
+              <text x={m.x} y={m.y + 1.6}>
+                {LANDMARK[m.kind].icon}
+                <title>{`${LANDMARK[m.kind].name} — ${LANDMARK[m.kind].does}`}</title>
+              </text>
+            </g>
+          ))}
 
           {view.houses.map((h) => {
             const mem = h.members.map((id) => view.citizens.find((c) => c.id === id)).filter((c): c is Citizen => !!c)
@@ -450,30 +359,27 @@ export default function App() {
             )
           })}
 
-          {view.marks.map((m) => (
-            <g key={`m${m.id}`} className={`mark ${m.kind}`}>
-              <circle cx={m.x} cy={m.y} r={LANDMARK[m.kind].radius} className="mrange" />
-              <text x={m.x} y={m.y + 1.6}>
-                {LANDMARK[m.kind].icon}
-                <title>{`${LANDMARK[m.kind].name} — ${LANDMARK[m.kind].does}`}</title>
-              </text>
-            </g>
-          ))}
-
           {view.agents.map((a) => (
             <g key={a.id} className={`agent ${a.kind}`}>
               <circle cx={a.x} cy={a.y} r={AGENT_RADIUS} className="arange" />
               <circle cx={a.x} cy={a.y} r="2.8" />
               <text x={a.x} y={a.y + 1.4}>
                 {HIRE[a.kind].icon}
-                <title>{`${HIRE[a.kind].name} · เหลืออีก ${Math.max(0, Math.ceil((a.until - view.tick) / 24))} วัน`}</title>
+                <title>
+                  {a.kind === 'wraith'
+                    ? `ผีร้าย${a.name ? 'ที่เคยเป็น' + a.name : ''} — ${HIRE[a.kind].does}`
+                    : `${HIRE[a.kind].name} (จ้างโดย #${a.by}) · เหลืออีก ${Math.max(
+                        0,
+                        Math.ceil((a.until - view.tick) / 24),
+                      )} วัน`}
+                </title>
               </text>
             </g>
           ))}
 
           <g className="avatar" transform={`translate(${view.pos.x} ${view.pos.y})`}>
             <circle r="3.4" />
-            <text y="1.6">{me_.icon}</text>
+            <text y="1.6">{god.icon}</text>
           </g>
         </svg>
 
@@ -510,7 +416,6 @@ export default function App() {
           ))}
         </ol>
       </main>
-
     </div>
   )
 }

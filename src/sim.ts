@@ -93,7 +93,6 @@ export type World = {
   savedAt: number
 }
 
-const MAX_CATCHUP_TICKS = 24 * 3
 const LEAVE_FEAR = 85
 // องค์กรนิลกาฬ — ภัยที่โตตามเวลา แต่ "ไม่ติดต่อ" เหมือนโรค มัน "ชวนคน"
 // คนที่กลัวและไม่มีใครดูแลคือเป้าหมาย · ย่านที่มีศาลชวนยาก · ตำรวจ/หมอผีดึงกลับได้
@@ -1151,33 +1150,6 @@ function doOmen(w: World) {
 
 export const omen = (w: World) => castPower(w, 'omen')
 
-// --- save / offline progress ---
-// เมืองส่วนตัวแยกตาม PIN — คนละ PIN บนเครื่องเดียวกันคือคนละเมือง
-const keyFor = (slot: string) => `spirit-parade-save:${slot}`
-
-export function save(w: World, slot: string) {
-  w.savedAt = Date.now()
-  localStorage.setItem(keyFor(slot), JSON.stringify(w))
-}
-
-// คืน null เมื่อยังไม่เคยเล่น (หรือ save รุ่นเก่า) → ให้ UI ถามว่าจะเป็นใครก่อน
-export function load(msPerTick: number, slot: string): World | null {
-  const raw = localStorage.getItem(keyFor(slot))
-  if (!raw) return null
-  let w: World
-  try {
-    w = JSON.parse(raw) as World
-  } catch {
-    return null
-  }
-  if (!w.runs || typeof w.nextId !== 'number' || !w.avatar || !w.houses || !w.agents || !w.marks) return null
-  w.avatar = 'pootah' // save เก่าอาจเป็นสายที่ลบไปแล้ว // save รุ่นเก่า ทิ้งได้
-  const missed = Math.min(Math.floor((Date.now() - w.savedAt) / msPerTick), MAX_CATCHUP_TICKS)
-  for (let i = 0; i < missed; i++) step(w)
-  if (missed > 2) push(w, `— ปู่ตาไม่ได้มองมา ${Math.max(1, Math.floor(missed / 24))} วัน เมืองเดินของมันเอง —`, true)
-  return w
-}
-
 // ponytail: self-check เล็กๆ แทน test framework — รันเองตอน dev
 export function selfCheck() {
   const a = createWorld(1)
@@ -1452,17 +1424,6 @@ export function selfCheck() {
   }
   for (let i = 0; i < 24 * 30; i++) step(monks)
   console.assert(wraithCount(monks) < wr0, 'พระที่จ้างมาต้องส่งผีร้ายไปเกิดได้')
-
-  // PIN แยกเมืองในเครื่องเดียวกัน
-  const wA = createWorld(51)
-  wA.faith = 777
-  save(wA, '123')
-  const wB = createWorld(52)
-  wB.faith = 111
-  save(wB, '999')
-  console.assert(Math.round(load(2000, '123')!.faith) === 777, 'PIN เดิมต้องได้เมืองเดิม')
-  console.assert(Math.round(load(2000, '999')!.faith) === 111, 'คนละ PIN ต้องคนละเมือง')
-  console.assert(load(2000, 'ไม่เคยใช้') === null, 'PIN ใหม่ต้องได้เมืองใหม่')
 
   console.log('sim selfCheck ผ่าน')
 }
