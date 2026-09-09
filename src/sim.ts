@@ -22,6 +22,7 @@ export type Citizen = {
   age: number
   ties: number[] // เพื่อน/ญาติ 1-2 คน
   partner: number | null
+  nilkal?: boolean // เข้าองค์กรนิลกาฬแล้ว
   legend?: string // ตัวละครจากนิยาย — ไม่แก่ ไม่ตาย ไม่หนี มีบทบาทเฉพาะตัว
   bornHere: boolean // เกิดในเมืองที่เทพรักษาไว้ = ศรัทธาต่อหัวมากกว่า
   gone: boolean
@@ -95,6 +96,9 @@ export type World = {
 
 const MAX_CATCHUP_TICKS = 24 * 3
 const LEAVE_FEAR = 85
+// องค์กรนิลกาฬ — ภัยที่โตตามเวลา แต่ "ไม่ติดต่อ" เหมือนโรค มัน "ชวนคน"
+// คนที่กลัวและไม่มีใครดูแลคือเป้าหมาย · ย่านที่มีศาลชวนยาก · ตำรวจ/หมอผีดึงกลับได้
+const NILKAL_START_DAY = 120 // เมืองต้องได้อยู่เงียบๆ ก่อนสักพัก
 const ZONE_COMFORT = 6 // คนต่อย่านที่อยู่กันได้สบาย เกินกว่านี้เริ่มระแวงกัน
 const GROW_FEAR = 55 // เมืองกลัวเกินนี้ = ไม่มีใครแต่งงาน/มีลูก/ย้ายเข้า
 const EVENT_COOLDOWN = 8 // ชั่วโมง
@@ -378,6 +382,7 @@ export function income(w: World, _avatar: AvatarId, r: () => number): number {
   return n
 }
 
+export const nilkalCount = (w: World) => alive(w).filter((c) => c.nilkal).length
 export const alive = (w: World) => w.citizens.filter((c) => !c.gone)
 export const cityFear = (w: World) => {
   const a = alive(w)
@@ -533,7 +538,7 @@ function jobsWork(w: World, r: () => number) {
   for (const z of ZONES) {
     const here = people.filter((c) => c.zone === z)
     if (!here.length) continue
-    const n = (job: string) => Math.min(here.filter((c) => c.job === job).length, CAP)
+    const n = (job: string) => Math.min(here.filter((c) => c.job === job && !c.nilkal).length, CAP)
     const calm = (n('แม่ค้า') + n('พ่อค้า')) * 1.5 + n('รปภ.') * 1
     if (calm) for (const o of here) scare(o, -calm)
     if (!w.shared) w.faith += n('คนงานศาล') * 1.5 * (r() < 0.5 ? 1 : 0)
@@ -555,6 +560,44 @@ function jobsWork(w: World, r: () => number) {
   }
 }
 
+function nilkal(w: World, r: () => number) {
+  if (day(w) < NILKAL_START_DAY) return
+  const people = alive(w)
+  const members = people.filter((c) => c.nilkal)
+
+  // ชวนคนเข้าองค์กร — เป้าหมายคือคนที่กลัวและอยู่ห่างศาล
+  for (const c of people) {
+    if (c.nilkal || c.legend || c.job === 'เด็ก') continue
+    const [x, y] = citizenPos(w, c)
+    const guarded = nearMark(w, 'shrine', x, y) ? 0.25 : 1
+    const pull = (c.fear / 100) * 0.02 * guarded * (1 + members.length * 0.15)
+    if (r() < pull) {
+      c.nilkal = true
+      push(w, `${c.name} เริ่มไปนั่งคุยกับคนแปลกหน้าที่ท้าย${c.zone}ทุกคืน`, true)
+    }
+  }
+
+  // สมาชิกทำงานให้องค์กร — ดูดของที่ควรเข้าศาล และทำให้ย่านตัวเองอึมครึม
+  for (const c of members) {
+    if (!w.shared) w.faith = Math.max(0, w.faith - 1.5)
+    for (const o of people) if (o.zone === c.zone && o.id !== c.id) scare(o, 1.2)
+  }
+
+  // ตำรวจที่จ้างไว้เจอสมาชิกในวงของมัน = ดึงกลับได้
+  for (const a of w.agents) {
+    if (a.kind !== 'police') continue
+    const keep = w.pos
+    w.pos = { x: a.x, y: a.y }
+    const caught = reach(w).find((c) => c.nilkal)
+    w.pos = keep
+    if (caught && r() < 0.35) {
+      caught.nilkal = false
+      scare(caught, -10)
+      push(w, `ตำรวจพา${caught.name}กลับบ้าน "ไปทำอะไรอยู่แถวนั้นก็ไม่รู้"`, true)
+    }
+  }
+}
+
 function crowding(w: World, r: () => number) {
   for (const z of ZONES) {
     const here = alive(w).filter((c) => c.zone === z)
@@ -562,13 +605,21 @@ function crowding(w: World, r: () => number) {
     if (over <= 0) continue
     for (const c of here) scare(c, over * 1.6)
     const avg = here.reduce((n, c) => n + c.fear, 0) / here.length
-    if (r() < over * (avg / 100 + over / 25) * 0.05) {
-      const victim = here.filter((c) => !c.legend)[Math.floor(r() * here.filter((c) => !c.legend).length)]
+    const cell = here.some((c) => c.nilkal)
+    if (r() < over * (avg / 100 + over / 25) * 0.05 * (cell ? 2.5 : 1)) {
+      const pool = here.filter((c) => !c.legend && !c.nilkal)
+      const victim = pool[Math.floor(r() * pool.length)]
       if (!victim) continue
       victim.gone = true
       leaveHouse(w, victim.id)
-      for (const o of here) if (o.id !== victim.id) scare(o, 10)
-      push(w, `${victim.name} หายตัวไปจาก${z} ไม่มีใครเห็นอีกเลย`, true)
+      for (const o of here) if (o.id !== victim.id) scare(o, cell ? 14 : 10)
+      push(
+        w,
+        cell
+          ? `${victim.name} หายไปจาก${z} คนแถวนั้นบอกว่าเห็นเดินไปกับคนของนิลกาฬ`
+          : `${victim.name} หายตัวไปจาก${z} ไม่มีใครเห็นอีกเลย`,
+        true,
+      )
     }
   }
 }
@@ -694,7 +745,10 @@ export const HIRE: Record<
       const client = near.filter((c) => c.fear > 50).sort((x, y) => y.fear - x.fear)[0]
       if (client) {
         client.fear = clamp(client.fear - 25)
-        push(w, `[หมอผี] ${client.name} จ่ายค่าครูแล้วนอนหลับได้เป็นคืนแรก`, true)
+        if (client.nilkal) {
+          client.nilkal = false
+          push(w, `[หมอผี] ${client.name} เลิกไปหาคนพวกนั้นแล้ว หลังทำพิธีคืนหนึ่ง`, true)
+        } else push(w, `[หมอผี] ${client.name} จ่ายค่าครูแล้วนอนหลับได้เป็นคืนแรก`, true)
       } else for (const c of near) scare(c, 9)
     },
   },
@@ -859,6 +913,7 @@ export function step(w: World) {
   // 8) อาชีพชาวเมือง + วงจรชีวิต — วันละครั้ง
   if (w.tick % 24 === 0) {
     jobsWork(w, r)
+    nilkal(w, r)
     crowding(w, r)
     lifeCycle(w, r)
   }
@@ -1324,9 +1379,43 @@ export function selfCheck() {
   console.assert(pop < 60, `ไม่มีเพดานแล้ว แต่ความแออัดต้องกันเมืองไม่ให้บวม (ได้ ${pop})`)
   console.assert(pop > 12, 'และต้องไม่ทำให้เมืองตายเกลี้ยงด้วย')
   console.assert(
-    crowd.log.some((l) => l.text.includes('หายตัวไปจาก')),
-    'ต้องมีคนหายตัวไปจริงเมื่อย่านแน่น',
+    crowd.log.some((l) => /หายตัวไปจาก|หายไปจาก/.test(l.text)),
+    'ต้องมีคนหายตัวไปจริงเมื่อย่านแน่นหรือมีนิลกาฬ',
   )
+
+  const nk = createWorld(95)
+  nk.citizens.forEach((c) => (c.fear = 80))
+  for (let i = 0; i < 24 * 400; i++) step(nk)
+  console.assert(nilkalCount(nk) > 0, 'เมืองที่กลัวและไม่มีใครดูแล นิลกาฬต้องหาสมาชิกได้')
+  console.assert(
+    nk.citizens.every((c) => !(c.nilkal && c.legend)),
+    'ตัวละครนิยายต้องไม่เข้านิลกาฬ',
+  )
+
+  const guard = createWorld(95)
+  guard.citizens.forEach((c) => (c.fear = 80))
+  guard.faith = 5000
+  for (const z of ZONES) {
+    moveTo(guard, ZONE_POS[z][0], ZONE_POS[z][1])
+    castPower(guard, 'build_shrine')
+  }
+  for (let i = 0; i < 24 * 400; i++) step(guard)
+  console.assert(
+    nilkalCount(guard) < nilkalCount(nk),
+    'เมืองที่ปูศาลไว้ทั่ว นิลกาฬต้องชวนคนได้ยากกว่า',
+  )
+
+  const cops = createWorld(96)
+  cops.citizens.forEach((c) => (c.fear = 85))
+  for (let i = 0; i < 24 * 300; i++) step(cops)
+  const beforeCops = nilkalCount(cops)
+  cops.faith = 5000
+  for (const z of ZONES) {
+    moveTo(cops, ZONE_POS[z][0], ZONE_POS[z][1])
+    castPower(cops, 'hire_police')
+  }
+  for (let i = 0; i < 24 * 4; i++) step(cops)
+  console.assert(nilkalCount(cops) <= beforeCops, 'ตำรวจที่จ้างมาต้องดึงคนกลับได้ ไม่ใช่ปล่อยให้โตอย่างเดียว')
 
   // PIN แยกเมืองในเครื่องเดียวกัน
   const wA = createWorld(51)

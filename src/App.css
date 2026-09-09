@@ -93,3 +93,6 @@ main { display: grid; grid-template-columns: minmax(420px, 1.4fr) minmax(230px, 
 .board .mark.shelter .mrange { stroke: #7ab4d6; }
 .roster .nm.legend { color: #e0c07a; }
 .board .dot.legend { stroke: #e0c07a; stroke-width: .8; }
+.stat b.bad { color: #b06be0; }
+.roster .nm { }
+.board .dot.nilkal { stroke: #b06be0; stroke-width: 1; }

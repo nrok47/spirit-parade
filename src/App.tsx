@@ -6,6 +6,7 @@ import {
   HIRE,
   LANDMARK,
   legendOf,
+  nilkalCount,
   RADIUS,
   ZONES,
   ZONE_POS,
@@ -219,6 +220,7 @@ export default function App() {
   const fear = cityFear(view)
   const faith = Math.floor(mode === 'shared' ? myFaith : view.faith)
   const cal = calendar(view)
+  const nk = nilkalCount(view)
 
   const fire = (p: Power, c?: Citizen, z?: Zone) => {
     if (mode === 'local') {
@@ -283,6 +285,12 @@ export default function App() {
           <span>ความกลัว</span>
           <b style={{ color: fearColor(fear) }}>{fear}</b>
         </div>
+        {nk > 0 && (
+          <div className="stat" title="คนที่เข้าองค์กรนิลกาฬแล้ว — ตำรวจหรือหมอผีดึงกลับได้">
+            <span>นิลกาฬ</span>
+            <b className="bad">{nk}</b>
+          </div>
+        )}
         <div className="stat">
           <span>ศรัทธา</span>
           <b>{faith}</b>
@@ -423,7 +431,9 @@ export default function App() {
                       cx={cx}
                       cy={cy}
                       r={pickable ? 2.6 : c.legend ? 2.2 : 1.7}
-                      className={`dot ${c.spirit ? 'spirit' : ''} ${c.legend ? 'legend' : ''} ${pickable ? 'pick' : ''}`}
+                      className={`dot ${c.spirit ? 'spirit' : ''} ${c.legend ? 'legend' : ''} ${
+                        c.nilkal ? 'nilkal' : ''
+                      } ${pickable ? 'pick' : ''}`}
                       style={{ fill: fearColor(c.fear) }}
                       onClick={(e) => {
                         e.stopPropagation()
@@ -483,6 +493,7 @@ export default function App() {
               <span className={`nm ${c.legend ? 'legend' : ''}`}>
                 {c.spirit ? '👻' : '🧍'} {c.name}
                 {c.legend ? ' ★' : ''}
+                {c.nilkal ? ' ☠' : ''}
               </span>
               <i style={{ background: fearColor(c.fear) }} />
               <span className="mk">
