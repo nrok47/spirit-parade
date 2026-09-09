@@ -4,6 +4,7 @@ import {
   AGENT_RADIUS,
   BOARD,
   HIRE,
+  LANDMARK,
   RADIUS,
   ZONES,
   ZONE_POS,
@@ -437,6 +438,16 @@ export default function App() {
               </g>
             )
           })}
+
+          {view.marks.map((m) => (
+            <g key={`m${m.id}`} className={`mark ${m.kind}`}>
+              <circle cx={m.x} cy={m.y} r={LANDMARK[m.kind].radius} className="mrange" />
+              <text x={m.x} y={m.y + 1.6}>
+                {LANDMARK[m.kind].icon}
+                <title>{`${LANDMARK[m.kind].name} — ${LANDMARK[m.kind].does}`}</title>
+              </text>
+            </g>
+          ))}
 
           {view.agents.map((a) => (
             <g key={a.id} className={`agent ${a.kind}`}>

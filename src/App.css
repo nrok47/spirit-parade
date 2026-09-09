@@ -86,3 +86,8 @@ main { display: grid; grid-template-columns: minmax(420px, 1.4fr) minmax(230px, 
 .roster .nm { overflow: hidden; text-overflow: ellipsis; }
 .roster .mk { font-size: 10px; letter-spacing: 1px; }
 .roster i { height: 4px; }
+
+.board .mark text { font-size: 5px; text-anchor: middle; pointer-events: auto; }
+.board .mrange { fill: rgba(214, 194, 122, .05); stroke-width: .3; stroke-dasharray: .8 1.2; }
+.board .mark.shrine .mrange { stroke: #e0c07a; }
+.board .mark.shelter .mrange { stroke: #7ab4d6; }

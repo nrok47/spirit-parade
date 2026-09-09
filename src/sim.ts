@@ -36,6 +36,30 @@ export type House = { id: number; x: number; y: number; zone: Zone; members: num
 export type AgentKind = 'ghost' | 'shaman' | 'police' | 'thief' | 'monk' | 'vendor'
 export type Agent = { id: number; kind: AgentKind; by: string; x: number; y: number; until: number; next: number }
 export const AGENT_RADIUS = 18
+
+// สิ่งปลูกสร้าง = หมุดที่เปลี่ยนสนาม ไม่ใช่ตึกที่ผลิตทรัพยากร (ดูเส้นแบ่งใน context.md)
+// อยู่ถาวร ไม่มีคิวก่อสร้าง ไม่มีค่าบำรุง ไม่มีสภาพชำรุด — อาคาร 1 หลังมีผลหลัก 1 อย่าง
+export type LandmarkKind = 'shrine' | 'shelter'
+export type Landmark = { id: number; kind: LandmarkKind; by: string; x: number; y: number }
+export const LANDMARK: Record<
+  LandmarkKind,
+  { name: string; icon: string; cost: number; radius: number; does: string }
+> = {
+  shrine: {
+    name: 'ศาลปู่ตา',
+    icon: '⛩',
+    cost: 120,
+    radius: 20,
+    does: 'เทพเอื้อมถึงรอบศาลได้ตลอด แม้ตัวจะไปยืนที่อื่น · คนแถวนั้นไหว้ถี่ขึ้น',
+  },
+  shelter: {
+    name: 'ศูนย์พักพิง',
+    icon: '🏚',
+    cost: 90,
+    radius: 16,
+    does: 'คนแถวนั้นกลัวแค่ไหนก็ไม่หนีออกเมือง · แต่มาอยู่รวมกันแล้วยิ่งกลัวกันเอง',
+  },
+}
 export const AGENT_DAYS = 5
 export const AGENT_EVERY = 6 // ทำงานทุก 6 ชั่วโมง
 export const HOUSE_CAP = 3
@@ -50,6 +74,8 @@ export type World = {
   haunt: Record<number, number> // citizen id -> tick ที่การตามติดหมดฤทธิ์
   houses: House[]
   nextHouse: number
+  marks: Landmark[]
+  nextMark: number
   pos: { x: number; y: number } // ที่ที่ avatar ยืนอยู่บนกระดาน
   shared?: boolean // โลกร่วม: ศรัทธาเป็นของแต่ละคน replay จัดการเอง step ไม่ต้องบวกให้
   agents: Agent[]
@@ -84,7 +110,13 @@ export const ZONE_POS: Record<Zone, [number, number]> = {
 }
 
 const dist = (ax: number, ay: number, bx: number, by: number) => Math.hypot(ax - bx, ay - by)
-export const inRange = (w: World, x: number, y: number) => dist(w.pos.x, w.pos.y, x, y) <= RADIUS
+// เอื้อมถึงได้จากตัวเอง หรือจากศาลที่สร้างไว้ (B&W1: ศรัทธาคือพื้นที่ ไม่ใช่แค่ตัวเลข)
+export const inRange = (w: World, x: number, y: number) =>
+  dist(w.pos.x, w.pos.y, x, y) <= RADIUS ||
+  w.marks.some((m) => m.kind === 'shrine' && dist(m.x, m.y, x, y) <= LANDMARK.shrine.radius)
+
+export const nearMark = (w: World, kind: LandmarkKind, x: number, y: number) =>
+  w.marks.some((m) => m.kind === kind && dist(m.x, m.y, x, y) <= LANDMARK[kind].radius)
 export const houseOf = (w: World, id: number) => w.houses.find((h) => h.members.includes(id))
 export function citizenPos(w: World, c: Citizen): [number, number] {
   const h = houseOf(w, c.id)
@@ -182,6 +214,8 @@ export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'poot
     haunt: {},
     houses,
     nextHouse: houses.length,
+    marks: [],
+    nextMark: 0,
     agents: [],
     nextAgent: 0,
     pos: { x: ZONE_POS['ศาลปู่ตา'][0], y: ZONE_POS['ศาลปู่ตา'][1] },
@@ -201,7 +235,11 @@ export function createWorld(seed = Date.now() % 100000, avatar: AvatarId = 'poot
 export function income(w: World, _avatar: AvatarId, r: () => number): number {
   // ปู่ตากินจากคนที่เซ่นไหว้ — ยิ่งกลัวยิ่งไหว้ คนที่เกิดในเมืองนี้ให้มากกว่า
   let n = 0
-  for (const c of alive(w)) if (r() < c.fear / 260) n += c.bornHere ? 0.9 : 0.6
+  for (const c of alive(w))
+    if (r() < c.fear / 260) {
+      const [x, y] = citizenPos(w, c)
+      n += (c.bornHere ? 0.9 : 0.6) * (nearMark(w, 'shrine', x, y) ? 1.6 : 1) // มีศาลใกล้บ้าน ไหว้ง่ายกว่า
+    }
   return n
 }
 
@@ -346,6 +384,34 @@ function newCitizen(
     bornHere,
     gone: false,
     cooldown: 0,
+  }
+}
+
+// อาชีพของชาวเมืองไม่ใช่แค่ป้ายชื่อ — วันละครั้ง แต่ละอาชีพทำอะไรกับย่านตัวเอง
+// ไม่ขึ้น log (เป็นพื้นหลังของเมือง) เห็นผลผ่านตัวเลขความกลัวและศรัทธา
+function jobsWork(w: World, r: () => number) {
+  const people = alive(w)
+  const inZone = (z: Zone) => people.filter((c) => c.zone === z)
+  for (const c of people) {
+    if (c.job === 'แม่ค้า' || c.job === 'พ่อค้า') {
+      for (const o of inZone(c.zone)) scare(o, -1.5) // ย่านมีคนค้าขาย คนกล้าออกจากบ้าน
+    } else if (c.job === 'รปภ.') {
+      for (const o of inZone(c.zone)) scare(o, -1) // มีคนเฝ้า อุ่นใจขึ้นหน่อย
+    } else if (c.job === 'คนงานศาล') {
+      if (!w.shared && r() < 0.5) w.faith += 1.5 // ดูแลศาล คนมาไหว้สะดวก
+    } else if (c.job === 'ไรเดอร์') {
+      // วิ่งข้ามย่าน พาอารมณ์ของเมืองไปเกลี่ยให้เท่ากัน (ย่านสงบช่วยย่านที่กำลังตื่น)
+      const other = pick(r, ZONES.filter((z) => z !== c.zone))
+      const here = inZone(c.zone)
+      const there = inZone(other)
+      if (here.length && there.length) {
+        const gap = here.reduce((n, o) => n + o.fear, 0) / here.length - there.reduce((n, o) => n + o.fear, 0) / there.length
+        for (const o of there) scare(o, gap * 0.06)
+        for (const o of here) scare(o, -gap * 0.06)
+      }
+    } else if (c.job === 'สแกมเมอร์') {
+      if (r() < 0.3) w.faith = Math.max(0, w.faith - 2) // ตั้งบัญชีรับบุญปลอม ดูดของที่ควรเข้าศาล
+    }
   }
 }
 
@@ -565,6 +631,8 @@ export function step(w: World) {
       const options = CHAINS.map((ch, i) => (ch.when(c, w) ? i : -1)).filter((i) => i >= 0)
       if (options.length) {
         const idx = pick(r, options)
+        // ย่านที่มี รปภ. เรื่องผีๆ เริ่มยากขึ้น
+        if (idx === 0 && people.some((o) => o.job === 'รปภ.' && o.zone === c.zone) && r() < 0.6) return
         c.cooldown = w.tick + EVENT_COOLDOWN * 3
         w.runs.push({ chain: idx, step: 0, who: c.id, at: w.tick + CHAINS[idx].beats[0].after })
       }
@@ -578,6 +646,15 @@ export function step(w: World) {
   if (w.tick >= w.omenUntil)
     for (const c of people)
       if (c.fear >= LEAVE_FEAR && r() < 0.06) {
+        const [cx, cy] = citizenPos(w, c)
+        if (nearMark(w, 'shelter', cx, cy)) {
+          // ไม่หนี แต่คนที่หลบอยู่ด้วยกันยิ่งขวัญเสียใส่กัน
+          for (const o of alive(w)) {
+            const [ox, oy] = citizenPos(w, o)
+            if (o.id !== c.id && nearMark(w, 'shelter', ox, oy)) scare(o, 3)
+          }
+          continue
+        }
         c.gone = true
         leaveHouse(w, c.id)
         w.faith = Math.max(0, w.faith - 10)
@@ -615,8 +692,11 @@ export function step(w: World) {
   // 7) ศรัทธาที่ไม่ได้ใช้จางเอง — คนลืมเทพที่ไม่เคยแสดงตัว (กันศรัทธาบวมจนไม่ต้องตัดสินใจอะไร)
   if (w.tick % 24 === 0 && !w.shared) w.faith = Math.max(0, w.faith * 0.97)
 
-  // 8) วงจรชีวิต — วันละครั้ง
-  if (w.tick % 24 === 0) lifeCycle(w, r)
+  // 8) อาชีพชาวเมือง + วงจรชีวิต — วันละครั้ง
+  if (w.tick % 24 === 0) {
+    jobsWork(w, r)
+    lifeCycle(w, r)
+  }
 }
 
 // เดินเวลาจนกว่าจะมีเรื่องที่ควรรู้ (สูงสุด 2 วัน)
@@ -696,6 +776,24 @@ function settle(w: World, sex: 'ช' | 'ญ') {
   push(w, `${sex === 'ช' ? 'ชาย' : 'หญิง'}ชื่อ ${c.name} มาปลูกบ้านอยู่${zone} เป็น${c.job}`, true)
 }
 
+export const BUILD_POWERS: Power[] = (Object.keys(LANDMARK) as LandmarkKind[]).map((kind) => ({
+  key: `build_${kind}`,
+  name: `สร้าง${LANDMARK[kind].name}`,
+  cost: LANDMARK[kind].cost,
+  target: 'none' as const,
+  hint: `${LANDMARK[kind].does} · อยู่ถาวร`,
+  run: (w: World) => {
+    // หลังเดียวต่อพื้นที่ — ห้ามปูทับกันเอง
+    if (nearMark(w, kind, w.pos.x, w.pos.y)) {
+      w.faith += LANDMARK[kind].cost
+      push(w, `แถวนี้มี${LANDMARK[kind].name}อยู่แล้ว`)
+      return
+    }
+    w.marks.push({ id: w.nextMark++, kind, by: 'me', x: w.pos.x, y: w.pos.y })
+    push(w, `${LANDMARK[kind].icon} ${LANDMARK[kind].name}ตั้งขึ้นแล้วตรงนี้`, true)
+  },
+}))
+
 export const SETTLE_POWERS: Power[] = (['ช', 'ญ'] as const).map((sex) => ({
   key: `settle_${sex === 'ช' ? 'm' : 'f'}`,
   name: sex === 'ช' ? 'ชวนชายมาอยู่' : 'ชวนหญิงมาอยู่',
@@ -737,7 +835,7 @@ export const HIRE_POWERS: Power[] = (Object.keys(HIRE) as AgentKind[]).map((kind
 
 // เผื่อ save เก่าที่เคยเลือกสายอื่นไว้ตอนที่ยังมีจอเลือกตัวละคร — ตกมาที่ปู่ตาเสมอ
 export const avatarOf = (w: World) => AVATARS.find((a) => a.id === w.avatar) ?? AVATARS[0]
-export const powersOf = (w: World) => [...SETTLE_POWERS, ...HIRE_POWERS, ...avatarOf(w).powers]
+export const powersOf = (w: World) => [...BUILD_POWERS, ...SETTLE_POWERS, ...HIRE_POWERS, ...avatarOf(w).powers]
 
 export function moveTo(w: World, x: number, y: number) {
   w.pos = { x: clamp(Math.round(x), 0, BOARD), y: clamp(Math.round(y), 0, BOARD) }
@@ -812,7 +910,7 @@ export function load(msPerTick: number, slot: string): World | null {
   } catch {
     return null
   }
-  if (!w.runs || typeof w.nextId !== 'number' || !w.avatar || !w.houses || !w.agents) return null
+  if (!w.runs || typeof w.nextId !== 'number' || !w.avatar || !w.houses || !w.agents || !w.marks) return null
   w.avatar = 'pootah' // save เก่าอาจเป็นสายที่ลบไปแล้ว // save รุ่นเก่า ทิ้งได้
   const missed = Math.min(Math.floor((Date.now() - w.savedAt) / msPerTick), MAX_CATCHUP_TICKS)
   for (let i = 0; i < missed; i++) step(w)
@@ -866,6 +964,19 @@ export function selfCheck() {
     step(poor)
   }
   console.assert(rich.faith > poor.faith, 'เมืองที่กลัวต้องให้ศรัทธามากกว่าเมืองที่สงบ')
+
+  const noShrine = createWorld(74)
+  const withShrine = createWorld(74)
+  withShrine.faith = 500
+  moveTo(withShrine, ZONE_POS['ตลาด'][0], ZONE_POS['ตลาด'][1])
+  castPower(withShrine, 'build_shrine')
+  noShrine.faith = 0
+  withShrine.faith = 0
+  for (let i = 0; i < 24 * 60; i++) {
+    step(noShrine)
+    step(withShrine)
+  }
+  console.assert(withShrine.faith > noShrine.faith, 'ศาลต้องทำให้ศรัทธาไหลเข้ามากขึ้นจริง ไม่ใช่แค่เขียนไว้ในคำอธิบาย')
 
   const pol = createWorld(6)
   pol.faith = 200
@@ -987,6 +1098,38 @@ export function selfCheck() {
   moveTo(stack, 5, 95)
   castPower(stack, 'hire_monk')
   console.assert(stack.agents.length === 2, 'วางห่างกันต้องจ้างซ้ำอาชีพเดิมได้')
+
+  const sh = createWorld(71)
+  sh.faith = 500
+  const outsider = sh.citizens.find((c) => !citizenInRange(sh, c))!
+  const [ox, oy] = citizenPos(sh, outsider)
+  moveTo(sh, ox, oy)
+  castPower(sh, 'build_shrine')
+  moveTo(sh, ZONE_POS['ศาลปู่ตา'][0], ZONE_POS['ศาลปู่ตา'][1]) // เดินกลับมาที่เดิม
+  console.assert(citizenInRange(sh, outsider), 'ศาลต้องทำให้เอื้อมถึงคนไกลได้แม้ตัวจะไม่อยู่ตรงนั้น')
+  moveTo(sh, ox, oy) // กลับไปยืนที่เดิม แล้วลองสร้างทับ
+  const paidShrine = sh.faith
+  castPower(sh, 'build_shrine')
+  console.assert(sh.marks.length === 1 && sh.faith === paidShrine, 'สร้างทับที่เดิมไม่ได้ และต้องคืนเงิน')
+  moveTo(sh, 5, 95)
+  castPower(sh, 'build_shrine')
+  console.assert(sh.marks.length === 2, 'สร้างศาลหลังที่สองคนละที่ได้')
+
+  const shel = createWorld(72)
+  shel.faith = 500
+  castPower(shel, 'build_shelter')
+  for (const c of alive(shel)) c.fear = 99
+  const pop0 = alive(shel).length
+  for (let i = 0; i < 24 * 20; i++) step(shel)
+  const stayed = alive(shel).filter((c) => nearMark(shel, 'shelter', ...citizenPos(shel, c)))
+  console.assert(stayed.length > 0 && alive(shel).length > pop0 - 12, 'ศูนย์พักพิงต้องกันคนแถวนั้นไม่ให้หนี')
+
+  const jb = createWorld(73)
+  const traderZone = alive(jb).find((c) => c.job === 'แม่ค้า')!.zone
+  const tz0 = alive(jb).filter((c) => c.zone === traderZone).reduce((n, c) => n + c.fear, 0)
+  for (let i = 0; i < 24; i++) step(jb)
+  const tz1 = alive(jb).filter((c) => c.zone === traderZone).reduce((n, c) => n + c.fear, 0)
+  console.assert(tz1 < tz0 + 5, 'ย่านที่มีแม่ค้าต้องไม่กลัวขึ้นเฉยๆ อาชีพต้องมีผลจริง')
 
   // PIN แยกเมืองในเครื่องเดียวกัน
   const wA = createWorld(51)
