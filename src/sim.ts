@@ -22,7 +22,6 @@ export type Citizen = {
   age: number
   ties: number[] // เพื่อน/ญาติ 1-2 คน
   partner: number | null
-  nilkal?: boolean // เข้าองค์กรนิลกาฬแล้ว
   legend?: string // ตัวละครจากนิยาย — ไม่แก่ ไม่ตาย ไม่หนี มีบทบาทเฉพาะตัว
   bornHere: boolean // เกิดในเมืองที่เทพรักษาไว้ = ศรัทธาต่อหัวมากกว่า
   gone: boolean
@@ -35,8 +34,8 @@ export type ChainRun = { chain: number; step: number; who: number; at: number }
 export type House = { id: number; x: number; y: number; zone: Zone; members: number[] }
 
 // ตัวละครที่จ้างลงไปในเมือง แล้วมันทำงานของมันเอง — ผู้เล่นตัดสินใจแค่ จ้างใคร วางตรงไหน
-export type AgentKind = 'ghost' | 'shaman' | 'police' | 'thief' | 'monk' | 'vendor'
-export type Agent = { id: number; kind: AgentKind; by: string; x: number; y: number; until: number; next: number }
+export type AgentKind = 'ghost' | 'shaman' | 'police' | 'thief' | 'monk' | 'vendor' | 'wraith'
+export type Agent = { id: number; kind: AgentKind; by: string; name?: string; x: number; y: number; until: number; next: number }
 export const AGENT_RADIUS = 18
 
 // สิ่งปลูกสร้าง = หมุดที่เปลี่ยนสนาม ไม่ใช่ตึกที่ผลิตทรัพยากร (ดูเส้นแบ่งใน context.md)
@@ -98,6 +97,7 @@ const MAX_CATCHUP_TICKS = 24 * 3
 const LEAVE_FEAR = 85
 // องค์กรนิลกาฬ — ภัยที่โตตามเวลา แต่ "ไม่ติดต่อ" เหมือนโรค มัน "ชวนคน"
 // คนที่กลัวและไม่มีใครดูแลคือเป้าหมาย · ย่านที่มีศาลชวนยาก · ตำรวจ/หมอผีดึงกลับได้
+const WRAITH_FADE_DAYS = 60 // ผีร้ายที่ไม่ได้จับใครเลย 60 วัน จางหายไปเอง
 const NILKAL_START_DAY = 120 // เมืองต้องได้อยู่เงียบๆ ก่อนสักพัก
 const ZONE_COMFORT = 6 // คนต่อย่านที่อยู่กันได้สบาย เกินกว่านี้เริ่มระแวงกัน
 const GROW_FEAR = 55 // เมืองกลัวเกินนี้ = ไม่มีใครแต่งงาน/มีลูก/ย้ายเข้า
@@ -116,6 +116,7 @@ export const ZONE_POS: Record<Zone, [number, number]> = {
 }
 
 const dist = (ax: number, ay: number, bx: number, by: number) => Math.hypot(ax - bx, ay - by)
+const inRangeOf = (p: { x: number; y: number }, x: number, y: number, rad: number) => dist(p.x, p.y, x, y) <= rad
 // เอื้อมถึงได้จากตัวเอง หรือจากศาลที่สร้างไว้ (B&W1: ศรัทธาคือพื้นที่ ไม่ใช่แค่ตัวเลข)
 export const inRange = (w: World, x: number, y: number) =>
   dist(w.pos.x, w.pos.y, x, y) <= RADIUS ||
@@ -382,7 +383,7 @@ export function income(w: World, _avatar: AvatarId, r: () => number): number {
   return n
 }
 
-export const nilkalCount = (w: World) => alive(w).filter((c) => c.nilkal).length
+export const wraithCount = (w: World) => w.agents.filter((a) => a.kind === 'wraith').length
 export const alive = (w: World) => w.citizens.filter((c) => !c.gone)
 export const cityFear = (w: World) => {
   const a = alive(w)
@@ -538,7 +539,7 @@ function jobsWork(w: World, r: () => number) {
   for (const z of ZONES) {
     const here = people.filter((c) => c.zone === z)
     if (!here.length) continue
-    const n = (job: string) => Math.min(here.filter((c) => c.job === job && !c.nilkal).length, CAP)
+    const n = (job: string) => Math.min(here.filter((c) => c.job === job).length, CAP)
     const calm = (n('แม่ค้า') + n('พ่อค้า')) * 1.5 + n('รปภ.') * 1
     if (calm) for (const o of here) scare(o, -calm)
     if (!w.shared) w.faith += n('คนงานศาล') * 1.5 * (r() < 0.5 ? 1 : 0)
@@ -560,42 +561,53 @@ function jobsWork(w: World, r: () => number) {
   }
 }
 
+/**
+ * องค์กรนิลกาฬ — ไม่ชวนใครเข้าองค์กร แต่ "จับคนไปทดลอง"
+ * คนที่ถูกจับไม่ได้หายไปเฉยๆ — กลับมาเป็นผีร้ายเดินอาละวาดในเมืองที่ตัวเองเคยอยู่
+ * ผีร้ายจับคนต่อได้อีก = ภัยที่โตเอง · ปล่อยไว้เมืองตาย
+ * ทางสู้: ⛩ ศาล (จับยากในรัศมี) · 🪬 ปกปัก (ผีร้ายเข้าย่านไม่ได้) · 🧎 พระ + 🔮 หมอผี (ส่งไปเกิด)
+ * · ท่านขุน (ย่านที่เขาเฝ้า ผีร้ายไม่กล้าเข้า)
+ */
+function abduct(w: World, r: () => number, victim: Citizen, byWraith: boolean, feeder?: Agent) {
+  if (feeder) feeder.until = w.tick + WRAITH_FADE_DAYS * 24 // จับได้ = อยู่ต่อ
+  const [x, y] = citizenPos(w, victim)
+  victim.gone = true
+  leaveHouse(w, victim.id)
+  for (const o of alive(w)) if (o.zone === victim.zone) scare(o, 12)
+  w.agents.push({
+    id: w.nextAgent++,
+    kind: 'wraith',
+    by: 'nilkal',
+    name: victim.name,
+    x,
+    y,
+    until: w.tick + WRAITH_FADE_DAYS * 24, // ไม่ได้จับใครอีกก็จางไปเอง
+    next: w.tick + AGENT_EVERY,
+  })
+  push(
+    w,
+    byWraith
+      ? `${victim.name} ถูกลากเข้าไปในความมืดที่${victim.zone} เสียงร้องดังอยู่พักหนึ่งแล้วเงียบ`
+      : `${victim.name} ถูกคนของนิลกาฬพาตัวไปจาก${victim.zone} กลางดึก`,
+    true,
+  )
+  void r
+}
+
+/** ย่านที่ปกปักไว้ หรือย่านที่ท่านขุนเฝ้าอยู่ ผีร้ายเข้าไม่ได้ */
+const shielded = (w: World, z: Zone) =>
+  (w.wards[z] ?? 0) > w.tick || alive(w).some((c) => c.legend === 'ท่านขุน' && c.zone === z)
+
 function nilkal(w: World, r: () => number) {
   if (day(w) < NILKAL_START_DAY) return
-  const people = alive(w)
-  const members = people.filter((c) => c.nilkal)
-
-  // ชวนคนเข้าองค์กร — เป้าหมายคือคนที่กลัวและอยู่ห่างศาล
-  for (const c of people) {
-    if (c.nilkal || c.legend || c.job === 'เด็ก') continue
+  const targets = alive(w).filter((c) => {
+    if (c.legend || c.spirit || c.job === 'เด็ก' || shielded(w, c.zone)) return false
     const [x, y] = citizenPos(w, c)
-    const guarded = nearMark(w, 'shrine', x, y) ? 0.25 : 1
-    const pull = (c.fear / 100) * 0.02 * guarded * (1 + members.length * 0.15)
-    if (r() < pull) {
-      c.nilkal = true
-      push(w, `${c.name} เริ่มไปนั่งคุยกับคนแปลกหน้าที่ท้าย${c.zone}ทุกคืน`, true)
-    }
-  }
-
-  // สมาชิกทำงานให้องค์กร — ดูดของที่ควรเข้าศาล และทำให้ย่านตัวเองอึมครึม
-  for (const c of members) {
-    if (!w.shared) w.faith = Math.max(0, w.faith - 1.5)
-    for (const o of people) if (o.zone === c.zone && o.id !== c.id) scare(o, 1.2)
-  }
-
-  // ตำรวจที่จ้างไว้เจอสมาชิกในวงของมัน = ดึงกลับได้
-  for (const a of w.agents) {
-    if (a.kind !== 'police') continue
-    const keep = w.pos
-    w.pos = { x: a.x, y: a.y }
-    const caught = reach(w).find((c) => c.nilkal)
-    w.pos = keep
-    if (caught && r() < 0.35) {
-      caught.nilkal = false
-      scare(caught, -10)
-      push(w, `ตำรวจพา${caught.name}กลับบ้าน "ไปทำอะไรอยู่แถวนั้นก็ไม่รู้"`, true)
-    }
-  }
+    return !nearMark(w, 'shrine', x, y) || r() < 0.2 // ใกล้ศาล โดนจับยากกว่ามาก
+  })
+  if (!targets.length) return
+  const heat = cityFear(w) / 100
+  if (r() < 0.006 + heat * 0.018) abduct(w, r, pick(r, targets), false)
 }
 
 function crowding(w: World, r: () => number) {
@@ -605,9 +617,9 @@ function crowding(w: World, r: () => number) {
     if (over <= 0) continue
     for (const c of here) scare(c, over * 1.6)
     const avg = here.reduce((n, c) => n + c.fear, 0) / here.length
-    const cell = here.some((c) => c.nilkal)
+    const cell = false
     if (r() < over * (avg / 100 + over / 25) * 0.05 * (cell ? 2.5 : 1)) {
-      const pool = here.filter((c) => !c.legend && !c.nilkal)
+      const pool = here.filter((c) => !c.legend)
       const victim = pool[Math.floor(r() * pool.length)]
       if (!victim) continue
       victim.gone = true
@@ -724,7 +736,7 @@ function lifeCycle(w: World, r: () => number) {
 // ทุกอย่างต้อง deterministic (ดูกฎเหล็กใน context.md) · near = คนที่อยู่ในวงของมัน
 export const HIRE: Record<
   AgentKind,
-  { name: string; icon: string; cost: number; does: string; act: (w: World, r: () => number, near: Citizen[]) => void }
+  { name: string; icon: string; cost: number; does: string; act: (w: World, r: () => number, near: Citizen[], self: Agent) => void }
 > = {
   ghost: {
     name: 'ผี',
@@ -740,16 +752,18 @@ export const HIRE: Record<
     name: 'หมอผี',
     icon: '🔮',
     cost: 55,
-    does: 'ปัดเป่าคนที่กลัวหนัก ถ้าไม่มีลูกค้าก็ปั่นข่าวเอง',
-    act: (w, _r, near) => {
+    does: 'ปัดเป่าคนที่กลัวหนัก ไล่ผีร้ายได้ ถ้าไม่มีลูกค้าก็ปั่นข่าวเอง',
+    act: (w, r, near) => {
       const client = near.filter((c) => c.fear > 50).sort((x, y) => y.fear - x.fear)[0]
       if (client) {
         client.fear = clamp(client.fear - 25)
-        if (client.nilkal) {
-          client.nilkal = false
-          push(w, `[หมอผี] ${client.name} เลิกไปหาคนพวกนั้นแล้ว หลังทำพิธีคืนหนึ่ง`, true)
-        } else push(w, `[หมอผี] ${client.name} จ่ายค่าครูแล้วนอนหลับได้เป็นคืนแรก`, true)
+        push(w, `[หมอผี] ${client.name} จ่ายค่าครูแล้วนอนหลับได้เป็นคืนแรก`, true)
       } else for (const c of near) scare(c, 9)
+      const wr = w.agents.find((g) => g.kind === 'wraith' && inRangeOf(w.pos, g.x, g.y, AGENT_RADIUS))
+      if (wr && r() < 0.3) {
+        w.agents = w.agents.filter((g) => g !== wr)
+        push(w, `[หมอผี] ไล่ผีร้ายออกจากย่านนี้ได้แล้ว`, true)
+      }
     },
   },
   police: {
@@ -786,9 +800,26 @@ export const HIRE: Record<
     icon: '🧎',
     cost: 60,
     does: 'สวดทั้งวงให้ใจนิ่ง คนแก่ในวงอยู่ได้นานขึ้น',
-    act: (w, _r, near) => {
+    act: (w, r, near) => {
       for (const c of near) scare(c, -7)
-      if (near.length) push(w, `[พระ] เสียงสวดดังทั้งคืน คนแถวนั้นหลับสบายขึ้น`)
+      const wr = w.agents.find((g) => g.kind === 'wraith' && inRangeOf(w.pos, g.x, g.y, AGENT_RADIUS))
+      if (wr && r() < 0.4) {
+        w.agents = w.agents.filter((g) => g !== wr)
+        push(w, `[พระ] สวดส่ง${wr.name ? wr.name + 'ที่กลายเป็นผีร้าย' : 'ผีร้าย'}ไปเกิดได้แล้ว`, true)
+      } else if (near.length) push(w, `[พระ] เสียงสวดดังทั้งคืน คนแถวนั้นหลับสบายขึ้น`)
+    },
+  },
+  wraith: {
+    name: 'ผีร้าย',
+    icon: '💀',
+    cost: 0, // จ้างไม่ได้ — เกิดจากคนที่นิลกาฬจับไปทดลอง
+    does: 'อาละวาดในย่านที่มันวนอยู่ และลากคนอื่นเข้าไปเป็นพวกอีก',
+    act: (w, r, near, self) => {
+      const prey = near.filter((c) => !c.spirit && !shielded(w, c.zone))
+      if (!prey.length) return
+      for (const c of prey) scare(c, 6)
+      const worst = prey.filter((c) => !c.legend).sort((a, b) => b.fear - a.fear)[0]
+      if (worst && worst.fear > 80 && r() < 0.04) abduct(w, r, worst, true, self)
     },
   },
   vendor: {
@@ -807,7 +838,7 @@ function agentTurn(w: World, a: Agent, r: () => number) {
   const keep = w.pos
   w.pos = { x: a.x, y: a.y }
   w.quiet = true
-  HIRE[a.kind].act(w, r, reach(w))
+  HIRE[a.kind].act(w, r, reach(w), a)
   w.pos = keep
   w.quiet = false
 }
@@ -891,7 +922,13 @@ export function step(w: World) {
   for (const a of [...w.agents]) {
     if (w.tick >= a.until) {
       w.agents = w.agents.filter((x) => x !== a)
-      push(w, `${HIRE[a.kind].icon} ${HIRE[a.kind].name}ที่จ้างไว้หมดสัญญาแล้ว เก็บของกลับ`, true)
+      push(
+        w,
+        a.kind === 'wraith'
+          ? `ผีร้าย${a.name ? 'ที่เคยเป็น' + a.name : ''}จางหายไปเอง ไม่มีใครให้มันตามอีกแล้ว`
+          : `${HIRE[a.kind].icon} ${HIRE[a.kind].name}ที่จ้างไว้หมดสัญญาแล้ว เก็บของกลับ`,
+        true,
+      )
       continue
     }
     if (w.tick >= a.next) {
@@ -901,21 +938,22 @@ export function step(w: World) {
   }
 
   // 6.6) สรุปผลงานของตัวที่จ้างวันละครั้ง แทนการรายงานทุก 6 ชั่วโมง
-  if (w.tick % 24 === 0 && w.agents.length)
-    push(
-      w,
-      `คนที่จ้างไว้ยังทำงานอยู่: ${w.agents.map((a) => HIRE[a.kind].icon + HIRE[a.kind].name).join(' · ')}`,
-    )
+  const hired = w.agents.filter((a) => a.kind !== 'wraith')
+  if (w.tick % 24 === 0 && hired.length)
+    push(w, `คนที่จ้างไว้ยังทำงานอยู่: ${hired.map((a) => HIRE[a.kind].icon + HIRE[a.kind].name).join(' · ')}`)
 
   // 7) ศรัทธาที่ไม่ได้ใช้จางเอง — คนลืมเทพที่ไม่เคยแสดงตัว (กันศรัทธาบวมจนไม่ต้องตัดสินใจอะไร)
   if (w.tick % 24 === 0 && !w.shared) w.faith = Math.max(0, w.faith * 0.97)
 
   // 8) อาชีพชาวเมือง + วงจรชีวิต — วันละครั้ง
   if (w.tick % 24 === 0) {
-    jobsWork(w, r)
-    nilkal(w, r)
-    crowding(w, r)
-    lifeCycle(w, r)
+    // ⚠️ ระบบรายวันแต่ละตัวต้องมีตัวสุ่มของตัวเอง
+    // ถ้าใช้ r ตัวเดียวกันทั้งหมด แต่ละระบบจะดึงค่าที่ "ตำแหน่งเดิม" ของลำดับทุกวัน
+    // ซึ่งสหสัมพันธ์กันจน bug เงียบ (นิลกาฬเคยไม่ทำงานเลยสักครั้งเพราะเหตุนี้)
+    jobsWork(w, rng(w.seed + w.tick * 15013))
+    nilkal(w, rng(w.seed + w.tick * 40507))
+    crowding(w, rng(w.seed + w.tick * 62003))
+    lifeCycle(w, rng(w.seed + w.tick * 86249))
   }
 }
 
@@ -1024,7 +1062,9 @@ export const SETTLE_POWERS: Power[] = (['ช', 'ญ'] as const).map((sex) => ({
 }))
 
 // พลัง "จ้าง" — วางคนลงตรงจุดที่ผู้เล่นยืนอยู่ แล้วเขาทำงานของเขาเอง
-export const HIRE_POWERS: Power[] = (Object.keys(HIRE) as AgentKind[]).map((kind) => ({
+export const HIRE_POWERS: Power[] = (Object.keys(HIRE) as AgentKind[])
+  .filter((k) => HIRE[k].cost > 0) // ผีร้ายจ้างไม่ได้ มันมาเอง
+  .map((kind) => ({
   key: `hire_${kind}`,
   name: `จ้าง${HIRE[kind].name}`,
   cost: HIRE[kind].cost,
@@ -1050,8 +1090,8 @@ export const HIRE_POWERS: Power[] = (Object.keys(HIRE) as AgentKind[]).map((kind
       next: w.tick + AGENT_EVERY,
     })
     push(w, `${HIRE[kind].icon} มี${HIRE[kind].name}มาปักหลักอยู่แถวนี้ ${AGENT_DAYS} วัน`, true)
-  },
-}))
+    },
+  }))
 
 // เผื่อ save เก่าที่เคยเลือกสายอื่นไว้ตอนที่ยังมีจอเลือกตัวละคร — ตกมาที่ปู่ตาเสมอ
 export const avatarOf = (w: World) => AVATARS.find((a) => a.id === w.avatar) ?? AVATARS[0]
@@ -1383,39 +1423,35 @@ export function selfCheck() {
     'ต้องมีคนหายตัวไปจริงเมื่อย่านแน่นหรือมีนิลกาฬ',
   )
 
-  const nk = createWorld(95)
-  nk.citizens.forEach((c) => (c.fear = 80))
-  for (let i = 0; i < 24 * 400; i++) step(nk)
-  console.assert(nilkalCount(nk) > 0, 'เมืองที่กลัวและไม่มีใครดูแล นิลกาฬต้องหาสมาชิกได้')
+  // เมืองที่ปล่อยทิ้ง 5 ปี ต้องมีผีร้ายเกิดขึ้นจริง
+  const nk = createWorld(77)
+  while (calendar(nk).year <= 5) step(nk)
+  console.assert(wraithCount(nk) > 0, 'ปล่อยเมืองทิ้ง นิลกาฬต้องจับคนไปทำเป็นผีร้ายได้')
   console.assert(
-    nk.citizens.every((c) => !(c.nilkal && c.legend)),
-    'ตัวละครนิยายต้องไม่เข้านิลกาฬ',
+    nk.log.some((l) => /นิลกาฬ|ความมืด|ผีร้าย/.test(l.text)),
+    'ต้องมีบรรทัดเล่าว่าเกิดอะไรขึ้น',
   )
+  console.assert(alive(nk).some((c) => c.legend === 'ท่านขุน'), 'ท่านขุนต้องไม่ถูกจับไป')
 
-  const guard = createWorld(95)
-  guard.citizens.forEach((c) => (c.fear = 80))
-  guard.faith = 5000
+  const guarded = createWorld(77)
+  guarded.faith = 5000
   for (const z of ZONES) {
-    moveTo(guard, ZONE_POS[z][0], ZONE_POS[z][1])
-    castPower(guard, 'build_shrine')
+    moveTo(guarded, ZONE_POS[z][0], ZONE_POS[z][1])
+    castPower(guarded, 'build_shrine')
   }
-  for (let i = 0; i < 24 * 400; i++) step(guard)
-  console.assert(
-    nilkalCount(guard) < nilkalCount(nk),
-    'เมืองที่ปูศาลไว้ทั่ว นิลกาฬต้องชวนคนได้ยากกว่า',
-  )
+  guarded.faith = 0
+  while (calendar(guarded).year <= 5) step(guarded)
+  console.assert(wraithCount(guarded) <= wraithCount(nk), 'เมืองที่ปูศาลไว้ทั่ว ต้องโดนจับไม่มากกว่า')
 
-  const cops = createWorld(96)
-  cops.citizens.forEach((c) => (c.fear = 85))
-  for (let i = 0; i < 24 * 300; i++) step(cops)
-  const beforeCops = nilkalCount(cops)
-  cops.faith = 5000
-  for (const z of ZONES) {
-    moveTo(cops, ZONE_POS[z][0], ZONE_POS[z][1])
-    castPower(cops, 'hire_police')
+  const monks = nk
+  const wr0 = wraithCount(monks)
+  monks.faith = 5000
+  for (const g of monks.agents.filter((a) => a.kind === 'wraith')) {
+    moveTo(monks, g.x, g.y)
+    castPower(monks, 'hire_monk')
   }
-  for (let i = 0; i < 24 * 4; i++) step(cops)
-  console.assert(nilkalCount(cops) <= beforeCops, 'ตำรวจที่จ้างมาต้องดึงคนกลับได้ ไม่ใช่ปล่อยให้โตอย่างเดียว')
+  for (let i = 0; i < 24 * 30; i++) step(monks)
+  console.assert(wraithCount(monks) < wr0, 'พระที่จ้างมาต้องส่งผีร้ายไปเกิดได้')
 
   // PIN แยกเมืองในเครื่องเดียวกัน
   const wA = createWorld(51)
