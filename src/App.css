@@ -96,3 +96,7 @@ main { display: grid; grid-template-columns: minmax(420px, 1.4fr) minmax(230px, 
 .stat b.bad { color: #b06be0; }
 .roster .nm { }
 .board .dot.nilkal { stroke: #b06be0; stroke-width: 1; }
+
+.pendingbar { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #d7b48a; margin-top: 10px; }
+.board .pendingmark circle { fill: rgba(169,124,74,.25); stroke: #a97c4a; stroke-width: .5; stroke-dasharray: 1.2 1; }
+.board .pendingmark text { font-size: 3.4px; text-anchor: middle; }

@@ -32,10 +32,11 @@ export const START_FAITH = 60
 
 /**
  * ของที่คนอื่นทำจะถูกใส่เข้าโลก "ช้ากว่าตอนกด" เท่านี้เสมอ
- * ต้องมากกว่ารอบ poll (8 วิ) เพื่อให้ทุกเครื่องได้ action ครบก่อนถึงคิวใส่ — 2 tick = 20 วิ
+ * ต้องมากกว่ารอบ poll (4 วิ) เพื่อให้ทุกเครื่องได้ action ครบก่อนถึงคิวใส่ — 1 tick = 10 วิ
  * → ทุกเครื่องใส่ของชิ้นเดียวกันที่ tick เดียวกัน โลกจึงไม่แตก และไม่ต้อง replay ใหม่ทั้งใบทุกวินาที
  */
-export const APPLY_LAG = 2
+export const POLL_MS = 4000 // ถี่กว่า APPLY_LAG เสมอ
+export const APPLY_LAG = 1
 
 export type Action = {
   season: number
@@ -187,6 +188,11 @@ export function netSelfCheck() {
   console.assert(
     purseOf(late, 'z') < START_FAITH,
     'คนที่เพิ่งมา tick 280 ต้องไม่ได้ศรัทธาของ 280 tick ที่ผ่านมา (จ่ายค่าจ้างไปแล้วต้องเหลือน้อยกว่าทุนตั้งต้น)',
+  )
+
+  console.assert(
+    POLL_MS < APPLY_LAG * MS_PER_TICK,
+    'รอบ poll ต้องถี่กว่าเวลาหน่วง ไม่งั้นบางเครื่องได้ของไม่ทันคิว แล้วเมืองจะแตกกัน',
   )
 
   console.log('net selfCheck ผ่าน')

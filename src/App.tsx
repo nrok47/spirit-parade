@@ -28,6 +28,7 @@ import {
 import {
   APPLY_LAG,
   MS_PER_TICK,
+  POLL_MS,
   SEASON,
   advance,
   clearPin,
@@ -88,6 +89,8 @@ export default function App() {
   const [players, setPlayers] = useState<string[]>([])
   const [netErr, setNetErr] = useState<string | null>(null)
   const [aim, setAim] = useState<Power | null>(null)
+  const [pending, setPending] = useState<{ a: Action; name: string; cost: number }[]>([])
+  const [beat, setBeat] = useState(0) // ตัวกระตุ้นให้ตัวนับถอยหลังเดิน
   const [myPos, setMyPos] = useState({ x: ZONE_POS['ศาลปู่ตา'][0], y: ZONE_POS['ศาลปู่ตา'][1] })
 
   const sh = useRef<Shared | null>(null)
@@ -105,7 +108,15 @@ export default function App() {
     setView({ ...s.world })
     setPlayers(Object.keys(s.joined))
     setFaith(purseOf(s, me()))
+    setPending((q) => q.filter((x) => x.a.tick + APPLY_LAG > s.world.tick))
   }, [])
+
+  // มีของค้างอยู่ = เดินนาฬิกาทุกวินาทีเพื่อโชว์ตัวนับถอยหลัง
+  useEffect(() => {
+    if (!pending.length) return
+    const id = setInterval(() => setBeat((n) => n + 1), 500)
+    return () => clearInterval(id)
+  }, [pending.length])
 
   useEffect(() => {
     if (!pin) return
@@ -129,7 +140,7 @@ export default function App() {
       }
     }
     pull()
-    const p = setInterval(pull, 8000)
+    const p = setInterval(pull, POLL_MS)
     const t = setInterval(tick, MS_PER_TICK)
     return () => {
       dead = true
@@ -159,7 +170,8 @@ export default function App() {
   const god = avatarOf(view)
   const people = alive(view)
   const fear = cityFear(view)
-  const purse = Math.floor(faith)
+  const held = pending.reduce((n, x) => n + x.cost, 0)
+  const purse = Math.floor(faith) - held
   const cal = calendar(view)
   const wr = wraithCount(view)
   const others = players.filter((id) => id !== me())
@@ -170,7 +182,7 @@ export default function App() {
     if (!s) return
     // ลองกับสำเนาก่อน จะได้ไม่ส่งของที่ทำไม่ได้ขึ้นไป (ปุ่มที่กดแล้วเงียบคือบั๊กเสมอ)
     const probe = structuredClone(s.world)
-    probe.faith = faith
+    probe.faith = faith - pending.reduce((n, x) => n + x.cost, 0)
     moveTo(probe, myPos.x, myPos.y)
     if (!castPower(probe, p.key, c, z)) return
     const a: Action = {
@@ -185,6 +197,8 @@ export default function App() {
       py: myPos.y,
     }
     enqueue(s, [a])
+    setPending((q) => [...q, { a, name: p.name, cost: p.cost }])
+    setBeat((n) => n + 1)
     sendAction(a).catch((e) => {
       const msg = (e as Error).message
       setNetErr(
@@ -262,6 +276,20 @@ export default function App() {
           </span>
         )}
       </div>
+
+      {pending.length > 0 && (
+        <div className="pendingbar">
+          {pending.map((x, i) => {
+            void beat // ให้ re-render ทุกครึ่งวินาที
+            const left = Math.max(0, (x.a.tick + APPLY_LAG - nowTick()) * (MS_PER_TICK / 1000))
+            return (
+              <span key={i}>
+                ⏳ {x.name} — เข้าเมืองในอีก {left} วิ
+              </span>
+            )
+          })}
+        </div>
+      )}
 
       <div className="powers">
         {powersOf(view).map((p) => (
@@ -380,6 +408,15 @@ export default function App() {
                         Math.ceil((a.until - view.tick) / 24),
                       )} วัน`}
                 </title>
+              </text>
+            </g>
+          ))}
+
+          {pending.map((x, i) => (
+            <g key={`p${i}`} className="pendingmark">
+              <circle cx={x.a.px} cy={x.a.py} r="4" />
+              <text x={x.a.px} y={x.a.py + 1.6}>
+                ⏳
               </text>
             </g>
           ))}
