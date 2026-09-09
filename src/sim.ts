@@ -95,6 +95,7 @@ export type World = {
 
 const MAX_CATCHUP_TICKS = 24 * 3
 const LEAVE_FEAR = 85
+const ZONE_COMFORT = 6 // คนต่อย่านที่อยู่กันได้สบาย เกินกว่านี้เริ่มระแวงกัน
 const GROW_FEAR = 55 // เมืองกลัวเกินนี้ = ไม่มีใครแต่งงาน/มีลูก/ย้ายเข้า
 const EVENT_COOLDOWN = 8 // ชั่วโมง
 export const BOARD = 100
@@ -260,7 +261,7 @@ export const LEGENDS: {
     age: 70,
     role: 'คุ้มคนที่เดินทาง — คนกล้าย้ายเข้ามาอยู่ในเมืองนี้มากขึ้น',
     act: (w, r) => {
-      if (cityFear(w) < GROW_FEAR && alive(w).length < 26 && r() < 0.05) {
+      if (cityFear(w) < GROW_FEAR && r() < 0.05) {
         const boy = r() < 0.5
         const c = newCitizen(
           w,
@@ -527,28 +528,47 @@ function newCitizen(
 // ไม่ขึ้น log (เป็นพื้นหลังของเมือง) เห็นผลผ่านตัวเลขความกลัวและศรัทธา
 function jobsWork(w: World, r: () => number) {
   const people = alive(w)
-  const inZone = (z: Zone) => people.filter((c) => c.zone === z)
-  for (const c of people) {
-    const lg = legendOf(c.legend)
-    if (lg) lg.act(w, r, c)
-    if (c.job === 'แม่ค้า' || c.job === 'พ่อค้า') {
-      for (const o of inZone(c.zone)) scare(o, -1.5) // ย่านมีคนค้าขาย คนกล้าออกจากบ้าน
-    } else if (c.job === 'รปภ.') {
-      for (const o of inZone(c.zone)) scare(o, -1) // มีคนเฝ้า อุ่นใจขึ้นหน่อย
-    } else if (c.job === 'คนงานศาล') {
-      if (!w.shared && r() < 0.5) w.faith += 1.5 // ดูแลศาล คนมาไหว้สะดวก
-    } else if (c.job === 'ไรเดอร์') {
-      // วิ่งข้ามย่าน พาอารมณ์ของเมืองไปเกลี่ยให้เท่ากัน (ย่านสงบช่วยย่านที่กำลังตื่น)
-      const other = pick(r, ZONES.filter((z) => z !== c.zone))
-      const here = inZone(c.zone)
-      const there = inZone(other)
-      if (here.length && there.length) {
-        const gap = here.reduce((n, o) => n + o.fear, 0) / here.length - there.reduce((n, o) => n + o.fear, 0) / there.length
+  // ผลของอาชีพคิดเป็น "ย่าน" ไม่ใช่ "ต่อหัว" — ย่านหนึ่งมีแม่ค้า 5 คนก็ไม่ได้อุ่นใจกว่า 2 คน
+  const CAP = 2
+  for (const z of ZONES) {
+    const here = people.filter((c) => c.zone === z)
+    if (!here.length) continue
+    const n = (job: string) => Math.min(here.filter((c) => c.job === job).length, CAP)
+    const calm = (n('แม่ค้า') + n('พ่อค้า')) * 1.5 + n('รปภ.') * 1
+    if (calm) for (const o of here) scare(o, -calm)
+    if (!w.shared) w.faith += n('คนงานศาล') * 1.5 * (r() < 0.5 ? 1 : 0)
+    if (r() < 0.3) w.faith = Math.max(0, w.faith - n('สแกมเมอร์') * 2)
+    // ไรเดอร์วิ่งข้ามย่าน เกลี่ยอารมณ์ของเมืองให้เท่ากัน
+    if (n('ไรเดอร์')) {
+      const other = pick(r, ZONES.filter((x) => x !== z))
+      const there = people.filter((c) => c.zone === other)
+      if (there.length) {
+        const gap = here.reduce((a, c) => a + c.fear, 0) / here.length - there.reduce((a, c) => a + c.fear, 0) / there.length
         for (const o of there) scare(o, gap * 0.06)
         for (const o of here) scare(o, -gap * 0.06)
       }
-    } else if (c.job === 'สแกมเมอร์') {
-      if (r() < 0.3) w.faith = Math.max(0, w.faith - 2) // ตั้งบัญชีรับบุญปลอม ดูดของที่ควรเข้าศาล
+    }
+  }
+  for (const c of people) {
+    const lg = legendOf(c.legend)
+    if (lg) lg.act(w, r, c)
+  }
+}
+
+function crowding(w: World, r: () => number) {
+  for (const z of ZONES) {
+    const here = alive(w).filter((c) => c.zone === z)
+    const over = here.length - ZONE_COMFORT
+    if (over <= 0) continue
+    for (const c of here) scare(c, over * 1.6)
+    const avg = here.reduce((n, c) => n + c.fear, 0) / here.length
+    if (r() < over * (avg / 100 + over / 25) * 0.05) {
+      const victim = here.filter((c) => !c.legend)[Math.floor(r() * here.filter((c) => !c.legend).length)]
+      if (!victim) continue
+      victim.gone = true
+      leaveHouse(w, victim.id)
+      for (const o of here) if (o.id !== victim.id) scare(o, 10)
+      push(w, `${victim.name} หายตัวไปจาก${z} ไม่มีใครเห็นอีกเลย`, true)
     }
   }
 }
@@ -608,7 +628,7 @@ function lifeCycle(w: World, r: () => number) {
   }
 
   // ย้ายเข้า — เมืองที่ไม่น่ากลัวเกินไปเท่านั้นที่มีคนอยากมาอยู่
-  if (!stalled && people.length < 24 && r() < 0.1) {
+  if (!stalled && r() < 0.1) {
     const boy = r() < 0.5
     const c = newCitizen(
       w,
@@ -762,7 +782,8 @@ export function step(w: World) {
   }
 
   // 3) เปิด chain ใหม่ — คุมความถี่ด้วย cooldown รายคน ไม่ให้ log ท่วม
-  if (w.runs.length < 2 && r() < 0.14) {
+  // เมืองใหญ่ = เรื่องเยอะ ไม่งั้นเมือง 70 คนจะเงียบเท่าเมือง 13 คน
+  if (w.runs.length < 1 + Math.floor(people.length / 12) && r() < 0.14) {
     const free = people.filter((c) => c.cooldown <= w.tick)
     if (free.length) {
       const c = pick(r, free)
@@ -838,6 +859,7 @@ export function step(w: World) {
   // 8) อาชีพชาวเมือง + วงจรชีวิต — วันละครั้ง
   if (w.tick % 24 === 0) {
     jobsWork(w, r)
+    crowding(w, r)
     lifeCycle(w, r)
   }
 }
@@ -1294,6 +1316,16 @@ export function selfCheck() {
   console.assert(
     imm.citizens.filter((c) => c.legend).every((c) => c.age === legendOf(c.legend)!.age),
     'ตัวละครนิยายต้องไม่แก่ขึ้น',
+  )
+
+  const crowd = createWorld(91)
+  for (let i = 0; i < 24 * 365 * 15; i++) step(crowd)
+  const pop = alive(crowd).length
+  console.assert(pop < 60, `ไม่มีเพดานแล้ว แต่ความแออัดต้องกันเมืองไม่ให้บวม (ได้ ${pop})`)
+  console.assert(pop > 12, 'และต้องไม่ทำให้เมืองตายเกลี้ยงด้วย')
+  console.assert(
+    crowd.log.some((l) => l.text.includes('หายตัวไปจาก')),
+    'ต้องมีคนหายตัวไปจริงเมื่อย่านแน่น',
   )
 
   // PIN แยกเมืองในเครื่องเดียวกัน
